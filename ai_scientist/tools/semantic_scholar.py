@@ -9,6 +9,20 @@ import backoff
 from ai_scientist.tools.base_tool import BaseTool
 
 
+S2_MIN_REQUEST_INTERVAL_SECONDS = 1.1
+_last_s2_request_time = 0.0
+
+
+def throttle_semantic_scholar_requests() -> None:
+    """Respect Semantic Scholar's 1 request/second API-key limit."""
+    global _last_s2_request_time
+    now = time.monotonic()
+    elapsed = now - _last_s2_request_time
+    if elapsed < S2_MIN_REQUEST_INTERVAL_SECONDS:
+        time.sleep(S2_MIN_REQUEST_INTERVAL_SECONDS - elapsed)
+    _last_s2_request_time = time.monotonic()
+
+
 def on_backoff(details: Dict) -> None:
     print(
         f"Backing off {details['wait']:0.1f} seconds after {details['tries']} tries "
@@ -61,7 +75,8 @@ class SemanticScholarSearchTool(BaseTool):
         headers = {}
         if self.S2_API_KEY:
             headers["X-API-KEY"] = self.S2_API_KEY
-        
+
+        throttle_semantic_scholar_requests()
         rsp = requests.get(
             "https://api.semanticscholar.org/graph/v1/paper/search",
             headers=headers,
@@ -115,7 +130,8 @@ def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
     
     if not query:
         return None
-    
+
+    throttle_semantic_scholar_requests()
     rsp = requests.get(
         "https://api.semanticscholar.org/graph/v1/paper/search",
         headers=headers,
@@ -132,7 +148,6 @@ def search_for_papers(query, result_limit=10) -> Union[None, List[Dict]]:
     rsp.raise_for_status()
     results = rsp.json()
     total = results["total"]
-    time.sleep(1.0)
     if not total:
         return None
 
