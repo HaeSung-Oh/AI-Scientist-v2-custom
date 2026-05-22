@@ -188,6 +188,12 @@ aisci_outputs/
 slurm_logs/
 .out
 
+# Local research ideas / prompts
+ai_scientist/ideas/*.json
+ai_scientist/ideas/*.md
+ai_scientist/ideas/*.md.save
+ai_scientist/ideas/*.py
+
 # final papers
 final_papers/
 

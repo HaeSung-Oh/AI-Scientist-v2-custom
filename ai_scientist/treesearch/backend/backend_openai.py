@@ -20,6 +20,7 @@ OPENAI_TIMEOUT_EXCEPTIONS = (
 def get_ai_client(model: str, max_retries=2) -> openai.OpenAI:
     if model.startswith("ollama/"):
         client = openai.OpenAI(
+            api_key="ollama",
             base_url="http://localhost:11434/v1", 
             max_retries=max_retries
         )
@@ -60,6 +61,20 @@ def query(
 
     if func_spec is None:
         output = choice.message.content
+        if not output:
+            reasoning = getattr(choice.message, "reasoning", None)
+            tool_calls = getattr(choice.message, "tool_calls", None)
+            logger.warning(
+                "Empty model content from %s. finish_reason=%s, has_reasoning=%s, has_tool_calls=%s",
+                completion.model,
+                choice.finish_reason,
+                bool(reasoning),
+                bool(tool_calls),
+            )
+            if reasoning:
+                output = reasoning
+            else:
+                output = ""
     else:
         assert (
             choice.message.tool_calls

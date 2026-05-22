@@ -339,6 +339,15 @@ class MinimalAgent:
                 "  import os",
                 "  working_dir = os.path.join(os.getcwd(), 'working')",
                 "  os.makedirs(working_dir, exist_ok=True)",
+                "Before returning code, mentally run a strict Python sanity check:",
+                "  - No natural-language text may appear inside the code block unless it is a Python comment.",
+                "  - Do not invent keyword arguments; use exact standard-library names such as os.makedirs(..., exist_ok=True).",
+                "  - Imports must come from the correct package, e.g. scipy.stats.pearsonr, not sklearn.metrics.pearsonr.",
+                "  - Dataset __len__ methods must be exactly def __len__(self):",
+                "  - For PyTorch, explicitly track tensor shapes in comments near the model forward pass and make outputs match targets before computing loss.",
+                "  - Prefer batch_first=True for TransformerEncoderLayer to avoid seq/batch dimension mistakes.",
+                "  - Use reshape(...) rather than view(...) after permute(...).",
+                "  - The final code must be syntactically valid Python that would pass python -m py_compile.",
                 "The code should be a single-file python program that is self-contained and can be executed as-is.",
                 "No parts of the code should be skipped, don't terminate the code execution before finishing the script.",
                 "Your response should only contain a single code block.",
@@ -664,21 +673,27 @@ class MinimalAgent:
                 user_message=None,
                 model=self.cfg.agent.code.model,
                 temperature=self.cfg.agent.code.temp,
+                max_tokens=self.cfg.agent.code.max_tokens,
             )
 
             code = extract_code(completion_text)
             nl_text = extract_text_up_to_code(completion_text)
 
-            if code and nl_text:
+            if code:
                 # merge all code blocks into a single string
-                return nl_text, code
+                return nl_text or "Model returned code without a separate natural-language plan.", code
 
             print("Plan + code extraction failed, retrying...")
+            print(f"Unparseable response preview: {completion_text[:1000]}")
             prompt["Parsing Feedback"] = (
-                "The code extraction failed. Make sure to use the format ```python ... ``` for the code blocks."
+                "The code extraction failed. Make sure to include valid Python in a ```python ... ``` code block. "
+                "Put a brief natural-language plan before the code block."
             )
         print("Final plan + code extraction attempt failed, giving up...")
-        return "", completion_text  # type: ignore
+        return (
+            "Failed to extract valid Python code from the model response.",
+            "raise RuntimeError('Failed to extract valid Python code from model response after retries.')",
+        )
 
     def parse_exec_result(
         self, node: Node, exec_result: ExecutionResult, workspace: str
@@ -1230,20 +1245,26 @@ class ParallelAgent:
                 user_message=None,
                 model=self.cfg.agent.code.model,
                 temperature=self.cfg.agent.code.temp,
+                max_tokens=self.cfg.agent.code.max_tokens,
             )
 
             code = extract_code(completion_text)
             nl_text = extract_text_up_to_code(completion_text)
 
-            if code and nl_text:
+            if code:
                 # merge all code blocks into a single string
-                return nl_text, code
+                return nl_text or "Model returned code without a separate natural-language plan.", code
             print("Plan + code extraction failed, retrying...")
+            print(f"Unparseable response preview: {completion_text[:1000]}")
             prompt["Parsing Feedback"] = (
-                "The code extraction failed. Make sure to use the format ```python ... ``` for the code blocks."
+                "The code extraction failed. Make sure to include valid Python in a ```python ... ``` code block. "
+                "Put a brief natural-language plan before the code block."
             )
         print("Final plan + code extraction attempt failed, giving up...")
-        return "", completion_text
+        return (
+            "Failed to extract valid Python code from the model response.",
+            "raise RuntimeError('Failed to extract valid Python code from model response after retries.')",
+        )
 
     def _generate_seed_eval_aggregation_node(
         self, node: Node, agg_plotting_code: str

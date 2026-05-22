@@ -80,8 +80,10 @@ class SemanticScholarSearchTool(BaseTool):
             return None
 
         papers = results.get("data", [])
-        # Sort papers by citationCount in descending order
-        papers.sort(key=lambda x: x.get("citationCount", 0), reverse=True)
+        papers.sort(
+            key=lambda x: (x.get("year") or 0, x.get("citationCount") or 0),
+            reverse=True,
+        )
         return papers
 
     def format_papers(self, papers: List[Dict]) -> str:

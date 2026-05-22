@@ -6,10 +6,10 @@ import torch
 import os
 import re
 import sys
+import yaml
 from datetime import datetime
 from ai_scientist.llm import create_client
 
-from contextlib import contextmanager
 from ai_scientist.treesearch.perform_experiments_bfts_with_agentmanager import (
     perform_experiments_bfts,
 )
@@ -26,6 +26,12 @@ from ai_scientist.perform_icbinb_writeup import (
 from ai_scientist.perform_llm_review import perform_review, load_paper
 from ai_scientist.perform_vlm_review import perform_imgs_cap_ref_review
 from ai_scientist.utils.token_tracker import token_tracker
+
+
+CODE_MODEL_PRESETS = {
+    "qwen": "ollama/qwen3:32b",
+    "coder": "ollama/qwen2.5-coder:32b",
+}
 
 
 def print_time():
@@ -85,19 +91,19 @@ def parse_arguments():
     parser.add_argument(
         "--model_agg_plots",
         type=str,
-        default="o3-mini-2025-01-31",
+        default="ollama/qwen3:32b",
         help="Model to use for plot aggregation",
     )
     parser.add_argument(
         "--model_writeup",
         type=str,
-        default="o1-preview-2024-09-12",
+        default="ollama/qwen3:32b",
         help="Model to use for writeup",
     )
     parser.add_argument(
         "--model_citation",
         type=str,
-        default="gpt-4o-2024-11-20",
+        default="ollama/qwen3:32b",
         help="Model to use for citation gathering",
     )
     parser.add_argument(
@@ -109,14 +115,30 @@ def parse_arguments():
     parser.add_argument(
         "--model_writeup_small",
         type=str,
-        default="gpt-4o-2024-05-13",
+        default="ollama/qwen3:32b",
         help="Smaller model to use for writeup",
     )
     parser.add_argument(
         "--model_review",
         type=str,
-        default="gpt-4o-2024-11-20",
+        default="ollama/qwen3:32b",
         help="Model to use for review main text and captions",
+    )
+    parser.add_argument(
+        "--code",
+        type=str,
+        default="qwen",
+        choices=sorted(CODE_MODEL_PRESETS),
+        help=(
+            "Code-generation model preset. "
+            "'qwen' uses ollama/qwen3:32b; 'coder' uses ollama/qwen2.5-coder:32b."
+        ),
+    )
+    parser.add_argument(
+        "--code-model",
+        type=str,
+        default=None,
+        help="Explicit code-generation model override, e.g. ollama/codestral:22b.",
     )
     parser.add_argument(
         "--skip_writeup",
@@ -164,19 +186,28 @@ def find_pdf_path_for_review(idea_dir):
     return pdf_path
 
 
-@contextmanager
-def redirect_stdout_stderr_to_file(log_file_path):
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    log = open(log_file_path, "a")
-    sys.stdout = log
-    sys.stderr = log
-    try:
-        yield
-    finally:
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        log.close()
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+            stream.flush()
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self):
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
+
+
+def tee_stdout_stderr_to_file(log_file_path):
+    log = open(log_file_path, "a", buffering=1)
+    sys.stdout = Tee(sys.stdout, log)
+    sys.stderr = Tee(sys.stderr, log)
+    return log
 
 
 if __name__ == "__main__":
@@ -198,6 +229,9 @@ if __name__ == "__main__":
     idea_dir = f"experiments/{date}_{idea['Name']}_attempt_{args.attempt_id}"
     print(f"Results will be saved in {idea_dir}")
     os.makedirs(idea_dir, exist_ok=True)
+    console_log_path = osp.join(idea_dir, "run_console.log")
+    console_log = tee_stdout_stderr_to_file(console_log_path)
+    print(f"Console output is being saved to {console_log_path}")
 
     # Convert idea json to markdown file
     idea_path_md = osp.join(idea_dir, "idea.md")
@@ -252,6 +286,13 @@ if __name__ == "__main__":
         idea_dir,
         idea_path_json,
     )
+    code_model = args.code_model or CODE_MODEL_PRESETS[args.code]
+    with open(idea_config_path, "r") as f:
+        run_config = yaml.load(f, Loader=yaml.FullLoader)
+    run_config["agent"]["code"]["model"] = code_model
+    with open(idea_config_path, "w") as f:
+        yaml.dump(run_config, f)
+    print(f"Using code model: {code_model}")
 
     perform_experiments_bfts(idea_config_path)
     experiment_results_dir = osp.join(idea_dir, "logs/0-run/experiment_results")
@@ -366,4 +407,5 @@ if __name__ == "__main__":
     #     current_process.kill()
 
     # exit the program
+    console_log.close()
     sys.exit(0)

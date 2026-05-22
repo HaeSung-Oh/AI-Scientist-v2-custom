@@ -269,7 +269,7 @@ def annotate_history(journal, cfg=None):
                     if cfg.agent.get("summary", None) is not None:
                         model = cfg.agent.summary.model
                     else:
-                        model = "gpt-4o-2024-08-06"
+                        model = "ollama/qwen3:32b"
                     client = get_ai_client(model)
                     response = get_response_from_llm(
                         overall_plan_summarizer_prompt.format(
@@ -341,7 +341,7 @@ def overall_summarize(journals, cfg=None):
             if cfg.agent.get("summary", None) is not None:
                 model = cfg.agent.summary.get("model", "")
             else:
-                model = "gpt-4o-2024-08-06"
+                model = "ollama/qwen3:32b"
             client = get_ai_client(model)
             summary_json = get_stage_summary(journal, stage_name, model, client)
             return summary_json
@@ -356,7 +356,13 @@ def overall_summarize(journals, cfg=None):
                 total=len(list(journals)),
             )
         )
-        draft_summary, baseline_summary, research_summary, ablation_summary = results
+
+    empty_summary = {
+        "skipped": True,
+        "reason": "Stage was not reached before the run ended.",
+    }
+    padded_results = results + [empty_summary] * max(0, 4 - len(results))
+    draft_summary, baseline_summary, research_summary, ablation_summary = padded_results[:4]
 
     return draft_summary, baseline_summary, research_summary, ablation_summary
 

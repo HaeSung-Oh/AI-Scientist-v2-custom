@@ -23,7 +23,7 @@ exec:
 generate_report: True
 # LLM settings for final report from journal
 report:
-  model: gpt-4o-2024-11-20
+  model: ollama/qwen3:32b
   temp: 1.0
 
 experiment:
@@ -35,7 +35,7 @@ debug:
 # agent hyperparams
 agent:
   type: parallel
-  num_workers: 4
+  num_workers: 1 #2 #4
   stages:
     stage1_max_iters: 20
     stage2_max_iters: 12
@@ -54,19 +54,19 @@ agent:
 
   # LLM settings for coding
   code:
-    model: anthropic.claude-3-5-sonnet-20241022-v2:0
-    temp: 1.0
+    model: ollama/qwen3:32b # qwen3-coder:30b returns empty content on long BFTS code prompts.
+    temp: 0.2
     max_tokens: 12000
 
   # LLM settings for evaluating program output / tracebacks
   feedback:
-    model: gpt-4o-2024-11-20
+    model: ollama/qwen3:32b
     # gpt-4o
     temp: 0.5
     max_tokens: 8192
 
   vlm_feedback:
-    model: gpt-4o-2024-11-20
+    model: ollama/qwen3:32b
     temp: 0.5
     max_tokens: null
 
@@ -78,10 +78,10 @@ agent:
   # Options for summarizing findings and selecting the best node
   # If not specified, the default behavior will be used.
 
-  # summary:
-  #   model: gpt-4o
-  #   temp: 0.3
+  summary:
+    model: ollama/qwen3:32b
+    temp: 0.3
 
-  # select_node:
-  #   model: gpt-4o
-  #   temp: 0.3
+  select_node:
+    model: ollama/qwen3:32b
+    temp: 0.3

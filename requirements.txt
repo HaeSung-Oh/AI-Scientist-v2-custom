@@ -9,6 +9,14 @@ pymupdf4llm
 seaborn
 # Common Requirements
 numpy
+scipy
+pandas
+scikit-learn
+scikit-image
+opencv-python
+pillow
+einops
+timm
 transformers
 datasets
 tiktoken

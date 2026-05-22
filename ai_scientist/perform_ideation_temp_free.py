@@ -15,14 +15,30 @@ from ai_scientist.llm import (
 )
 
 from ai_scientist.tools.semantic_scholar import SemanticScholarSearchTool
+from ai_scientist.tools.literature_search import (
+    ArxivSearchTool,
+    OpenAlexSearchTool,
+    PubMedSearchTool,
+    SerpApiSearchTool,
+)
 from ai_scientist.tools.base_tool import BaseTool
 
 # Create tool instances
 semantic_scholar_tool = SemanticScholarSearchTool()
+arxiv_tool = ArxivSearchTool()
+pubmed_tool = PubMedSearchTool()
+openalex_tool = OpenAlexSearchTool()
+google_scholar_tool = SerpApiSearchTool(scholarly=True)
+web_search_tool = SerpApiSearchTool(scholarly=False)
 
 # Define tools at the top of the file
 tools = [
     semantic_scholar_tool,
+    arxiv_tool,
+    pubmed_tool,
+    openalex_tool,
+    google_scholar_tool,
+    web_search_tool,
     {
         "name": "FinalizeIdea",
         "description": """Finalize your idea by providing the idea details.
@@ -31,9 +47,12 @@ The IDEA JSON should include the following fields:
 - "Name": A short descriptor of the idea. Lowercase, no spaces, underscores allowed.
 - "Title": A catchy and informative title for the proposal.
 - "Short Hypothesis": A concise statement of the main hypothesis or research question. Clarify the need for this specific direction, ensure this is the best setting to investigate this idea, and there are not obvious other simpler ways to answer the question.
+- "Novelty Check": A concrete explanation of why this is not just a stale re-use of GRL, vanilla domain adversarial training, VAE disentanglement, or simple attention masking. Cite the recent search evidence that shaped the claim.
+- "Candidate Alternatives Considered": A list of at least three alternative ideas considered and why each was rejected.
 - "Related Work": A brief discussion of the most relevant related work and how the proposal clearly distinguishes from it, and is not a trivial extension.
 - "Abstract": An abstract that summarizes the proposal in conference format (approximately 250 words).
 - "Experiments": A list of experiments that would be conducted to validate the proposal. Ensure these are simple and feasible. Be specific in exactly how you would test the hypothesis, and detail precise algorithmic changes. Include the evaluation metrics you would use.
+- "Validation Plan": A concrete plan for testing whether the idea is actually useful, including baselines, ablations, failure cases, and what result would falsify the hypothesis.
 - "Risk Factors and Limitations": A list of potential risks and limitations of the proposal.""",
     },
 ]
@@ -62,6 +81,10 @@ system_prompt = f"""You are an experienced AI researcher who aims to propose hig
 
 Ensure that the proposal does not require resources beyond what an academic lab could afford. These proposals should lead to papers that are publishable at top ML conferences.
 
+Avoid stale, generic ideas based mainly on GRL, vanilla domain adversarial training, VAE disentanglement, or simple attention masking. You may mention these only as baselines or limitations, not as the main contribution. Prefer ideas grounded in 2024-2026 research directions, such as foundation-model priors, test-time adaptation, causal interventions, counterfactual image editing, diffusion-based perturbation, SAM/MedSAM-style prompting, uncertainty-aware pseudo-labeling, mechanistic shortcut diagnosis, and rigorous cross-domain evaluation.
+
+Use deep internal thinking before choosing each action. If the model supports Qwen thinking mode, use it. Compare multiple candidate directions, reject weak or stale variants, and stress-test the chosen idea before finalizing. Your final visible response must still contain only ACTION and ARGUMENTS in the required format; do not expose chain-of-thought, markdown fences, or extra commentary.
+
 You have access to the following tools:
 
 {tool_descriptions}
@@ -72,7 +95,7 @@ ACTION:
 <The action to take, exactly one of {tool_names_str}>
 
 ARGUMENTS:
-<If ACTION is "SearchSemanticScholar", provide the search query as {{"query": "your search query"}}. If ACTION is "FinalizeIdea", provide the idea details as {{"idea": {{ ... }}}} with the IDEA JSON specified below.>
+<If ACTION is a search tool, provide the search query as {{"query": "your search query"}}. If ACTION is "FinalizeIdea", provide the idea details as {{"idea": {{ ... }}}} with the IDEA JSON specified below.>
 
 If you choose to finalize your idea, provide the IDEA JSON in the arguments:
 
@@ -83,9 +106,12 @@ IDEA JSON:
     "Name": "...",
     "Title": "...",
     "Short Hypothesis": "...",
+    "Novelty Check": "...",
+    "Candidate Alternatives Considered": ["...", "...", "..."],
     "Related Work": "...",
     "Abstract": "...",
     "Experiments": "...",
+    "Validation Plan": "...",
     "Risk Factors and Limitations": "..."
   }}
 }}
@@ -93,10 +119,12 @@ IDEA JSON:
 
 Ensure the JSON is properly formatted for automatic parsing.
 
-Note: You should perform at least one literature search before finalizing your idea to ensure it is well-informed by existing research."""
+Note: You must perform at least two distinct literature searches before finalizing your idea to ensure it is well-informed by recent research. Prefer mixing search sources, for example Semantic Scholar plus PubMed for biomedical grounding, or arXiv plus OpenAlex for recent ML methods."""
 
 # Define the initial idea generation prompt
 idea_generation_prompt = """{workshop_description}
+
+/think
 
 Here are the proposals that you have already generated:
 
@@ -104,11 +132,13 @@ Here are the proposals that you have already generated:
 {prev_ideas_string}
 '''
 
-Begin by generating an interestingly new high-level research proposal that differs from what you have previously proposed.
+Begin by deeply investigating an interestingly new high-level research proposal that differs from what you have previously proposed. Do not finalize immediately unless the literature search and validation reasoning are already strong enough. Prefer searching first.
 """
 
 # Define the reflection prompt
 idea_reflection_prompt = """Round {current_round}/{num_reflections}.
+
+/think
 
 In your thoughts, first carefully consider the quality, novelty, and feasibility of the proposal you just created.
 Include any other factors that you think are important in evaluating the proposal.
@@ -117,12 +147,97 @@ Do not make things overly complicated.
 In the next attempt, try to refine and improve your proposal.
 Stick to the spirit of the original idea unless there are glaring issues.
 
+Before choosing your next action, explicitly check whether the idea would still look non-obvious and current relative to 2024-2026 work. If the idea mainly relies on GRL, vanilla domain adversarial training, VAE disentanglement, or simple attention masking, revise it or search for newer alternatives instead of finalizing.
+Before finalizing, compare at least three candidate ideas, reject the weaker ones, and define a validation plan with baselines, ablations, expected evidence, and falsification criteria.
+
 If you have new information from tools, such as literature search results, incorporate them into your reflection and refine your proposal accordingly.
 
 Results from your last action (if any):
 
 {last_tool_results}
 """
+
+
+def parse_json_prefix(text: str) -> Dict:
+    text = text.strip()
+    if text.startswith("```json"):
+        match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+        else:
+            text = text.removeprefix("```json").strip()
+    elif text.startswith("```"):
+        match = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+        else:
+            text = text.removeprefix("```").strip()
+
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+
+    return json.JSONDecoder().raw_decode(text[start:])[0]
+
+
+def parse_action_response(response_text: str) -> tuple[str, str]:
+    action_pattern = r"ACTION:\s*(.*?)\s*ARGUMENTS:"
+    arguments_pattern = r"ARGUMENTS:\s*(.*?)(?:$|\nTHOUGHT:|\nACTION:|\n$)"
+
+    action_match = re.search(action_pattern, response_text, re.DOTALL | re.IGNORECASE)
+    arguments_match = re.search(
+        arguments_pattern, response_text, re.DOTALL | re.IGNORECASE
+    )
+
+    if all([action_match, arguments_match]):
+        return action_match.group(1).strip(), arguments_match.group(1).strip()
+
+    try:
+        arguments_json = parse_json_prefix(response_text)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if "idea" in arguments_json:
+            return "FinalizeIdea", json.dumps(arguments_json)
+        if "query" in arguments_json:
+            return "SearchSemanticScholar", json.dumps(arguments_json)
+
+    raise ValueError("Failed to parse the LLM response.")
+
+
+def validate_final_idea(idea: Dict) -> List[str]:
+    required_fields = [
+        "Name",
+        "Title",
+        "Short Hypothesis",
+        "Novelty Check",
+        "Candidate Alternatives Considered",
+        "Related Work",
+        "Abstract",
+        "Experiments",
+        "Validation Plan",
+        "Risk Factors and Limitations",
+    ]
+    missing = [field for field in required_fields if not idea.get(field)]
+
+    alternatives = idea.get("Candidate Alternatives Considered")
+    if not isinstance(alternatives, list) or len(alternatives) < 3:
+        missing.append("at least three Candidate Alternatives Considered")
+
+    experiments = idea.get("Experiments")
+    if not isinstance(experiments, list) or len(experiments) < 3:
+        missing.append("at least three Experiments")
+
+    validation_plan = str(idea.get("Validation Plan", "")).lower()
+    for term in ["baseline", "ablation"]:
+        if term not in validation_plan:
+            missing.append(f"Validation Plan mentioning {term}")
+
+    novelty_check = str(idea.get("Novelty Check", "")).lower()
+    if "2024" not in novelty_check and "2025" not in novelty_check and "2026" not in novelty_check:
+        missing.append("Novelty Check grounded in 2024-2026 evidence")
+
+    return missing
 
 
 def generate_temp_free_idea(
@@ -154,6 +269,7 @@ def generate_temp_free_idea(
             last_tool_results = ""
             idea_finalized = False
             msg_history = []
+            num_searches = 0
 
             for reflection_round in range(num_reflections):
                 if reflection_round == 0:
@@ -180,30 +296,9 @@ def generate_temp_free_idea(
 
                 # Parse the LLM's response
                 try:
-                    # Use regular expressions to extract the components
-                    action_pattern = r"ACTION:\s*(.*?)\s*ARGUMENTS:"
-                    arguments_pattern = r"ARGUMENTS:\s*(.*?)(?:$|\nTHOUGHT:|\n$)"
-
-                    action_match = re.search(
-                        action_pattern, response_text, re.DOTALL | re.IGNORECASE
-                    )
-                    arguments_match = re.search(
-                        arguments_pattern, response_text, re.DOTALL | re.IGNORECASE
-                    )
-
-                    if not all([action_match, arguments_match]):
-                        raise ValueError("Failed to parse the LLM response.")
-
-                    action = action_match.group(1).strip()
-                    arguments_text = arguments_match.group(1).strip()
+                    action, arguments_text = parse_action_response(response_text)
                     print(f"Action: {action}")
                     print(f"Arguments: {arguments_text}")
-
-                    # If arguments are wrapped in ```json blocks, extract the content
-                    if arguments_text.startswith("```json"):
-                        arguments_text = re.search(
-                            r"```json\s*(.*?)\s*```", arguments_text, re.DOTALL
-                        ).group(1)
 
                     # Process the action and arguments
                     if action in tools_dict:
@@ -211,7 +306,7 @@ def generate_temp_free_idea(
                         tool = tools_dict[action]
                         # Parse arguments
                         try:
-                            arguments_json = json.loads(arguments_text)
+                            arguments_json = parse_json_prefix(arguments_text)
                         except json.JSONDecodeError:
                             raise ValueError(f"Invalid arguments JSON for {action}.")
 
@@ -220,15 +315,33 @@ def generate_temp_free_idea(
                             # Assuming the arguments match the parameters of the tool
                             result = tool.use_tool(**arguments_json)
                             last_tool_results = result
+                            if action.startswith("Search"):
+                                num_searches += 1
                         except Exception as e:
                             last_tool_results = f"Error using tool {action}: {str(e)}"
                     elif action == "FinalizeIdea":
+                        if num_searches < 2:
+                            last_tool_results = (
+                                "FinalizeIdea rejected: perform at least two distinct "
+                                "literature search actions before finalizing."
+                            )
+                            print(last_tool_results)
+                            continue
+
                         # Parse arguments
                         try:
-                            arguments_json = json.loads(arguments_text)
+                            arguments_json = parse_json_prefix(arguments_text)
                             idea = arguments_json.get("idea")
                             if not idea:
                                 raise ValueError("Missing 'idea' in arguments.")
+                            missing_requirements = validate_final_idea(idea)
+                            if missing_requirements:
+                                last_tool_results = (
+                                    "FinalizeIdea rejected: missing or weak requirements: "
+                                    + "; ".join(missing_requirements)
+                                )
+                                print(last_tool_results)
+                                continue
 
                             # Append the idea to the archive
                             idea_str_archive.append(json.dumps(idea))
@@ -247,7 +360,21 @@ def generate_temp_free_idea(
                         f"Failed to parse LLM response. Response text:\n{response_text}"
                     )
                     traceback.print_exc()
-                    break  # Exit the loop if parsing fails
+                    msg_history.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response could not be parsed. Respond "
+                                "using exactly this format:\n\nACTION:\n"
+                                "<one available action>\n\nARGUMENTS:\n"
+                                "{\"query\": \"...\"} for search, or "
+                                "{\"idea\": {...}} for FinalizeIdea. Do not include "
+                                "markdown fences or extra text."
+                            ),
+                        }
+                    )
+                    last_tool_results = "Previous response was unparsable; retry with the required ACTION/ARGUMENTS format."
+                    continue
 
             if idea_finalized:
                 continue  # Move to the next idea
