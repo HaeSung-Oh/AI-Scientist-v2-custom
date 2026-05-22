@@ -139,6 +139,15 @@ PY
 
 ## 5. Optional API Keys
 
+Some code paths use the OpenAI Python client directly. Even when the model is local through Ollama, the client may still require an API key string. Use a dummy key:
+
+```bash
+export OPENAI_API_KEY="ollama"
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+```
+
+These values do not send requests to OpenAI when the base URL points to the local Ollama server.
+
 Semantic Scholar works without a key, but rate limits are stricter.
 
 ```bash
@@ -315,4 +324,3 @@ If code generation repeatedly fails with a coder model, use the default:
 ```bash
 --code qwen
 ```
-
