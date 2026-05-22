@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import yaml
+import traceback
 from datetime import datetime
 from ai_scientist.llm import create_client
 
@@ -33,6 +34,29 @@ CODE_MODEL_PRESETS = {
     "coder": "ollama/qwen2.5-coder:32b",
 }
 
+BACKUP_ROOT = "experiment_backups"
+BACKUP_FILE_NAMES = {
+    "run_console.log",
+    "idea.md",
+    "idea.json",
+    "bfts_config.yaml",
+    "unified_tree_viz.html",
+    "tree_plot.html",
+    "journal.json",
+    "stage_progress.json",
+    "best_node_id.txt",
+    "token_tracker.json",
+    "token_tracker_interactions.json",
+    "draft_summary.json",
+    "baseline_summary.json",
+    "research_summary.json",
+    "ablation_summary.json",
+    "review_text.txt",
+    "review_img_cap_ref.json",
+}
+BACKUP_PREFIXES = ("best_solution_",)
+BACKUP_SUFFIXES = (".pdf",)
+
 
 def print_time():
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -43,6 +67,49 @@ def save_token_tracker(idea_dir):
         json.dump(token_tracker.get_summary(), f)
     with open(osp.join(idea_dir, "token_tracker_interactions.json"), "w") as f:
         json.dump(token_tracker.get_interactions(), f)
+
+
+def should_backup_file(filename):
+    return (
+        filename in BACKUP_FILE_NAMES
+        or filename.startswith(BACKUP_PREFIXES)
+        or filename.endswith(BACKUP_SUFFIXES)
+    )
+
+
+def backup_experiment(idea_dir, reason="manual"):
+    if not idea_dir or not osp.isdir(idea_dir):
+        return
+
+    backup_dir = osp.join(BACKUP_ROOT, osp.basename(idea_dir))
+    copied = 0
+    os.makedirs(backup_dir, exist_ok=True)
+
+    for root, _, files in os.walk(idea_dir):
+        for filename in files:
+            if not should_backup_file(filename):
+                continue
+            src = osp.join(root, filename)
+            rel_path = osp.relpath(src, idea_dir)
+            dst = osp.join(backup_dir, rel_path)
+            os.makedirs(osp.dirname(dst), exist_ok=True)
+            try:
+                shutil.copy2(src, dst)
+                copied += 1
+            except OSError as e:
+                print(f"Warning: failed to back up {src}: {e}")
+
+    manifest_path = osp.join(backup_dir, "backup_manifest.json")
+    manifest = {
+        "source": osp.abspath(idea_dir),
+        "backup": osp.abspath(backup_dir),
+        "reason": reason,
+        "copied_files": copied,
+        "timestamp": datetime.now().isoformat(),
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"Backed up {copied} files to {backup_dir} ({reason})")
 
 
 def parse_arguments():
@@ -233,6 +300,16 @@ if __name__ == "__main__":
     console_log = tee_stdout_stderr_to_file(console_log_path)
     print(f"Console output is being saved to {console_log_path}")
 
+    original_excepthook = sys.excepthook
+
+    def backup_then_report_exception(exc_type, exc_value, exc_traceback):
+        print("Unhandled exception occurred. Creating experiment backup before exit.")
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        backup_experiment(idea_dir, reason="unhandled_exception")
+        original_excepthook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = backup_then_report_exception
+
     # Convert idea json to markdown file
     idea_path_md = osp.join(idea_dir, "idea.md")
 
@@ -293,8 +370,10 @@ if __name__ == "__main__":
     with open(idea_config_path, "w") as f:
         yaml.dump(run_config, f)
     print(f"Using code model: {code_model}")
+    backup_experiment(idea_dir, reason="initialized")
 
     perform_experiments_bfts(idea_config_path)
+    backup_experiment(idea_dir, reason="after_bfts")
     experiment_results_dir = osp.join(idea_dir, "logs/0-run/experiment_results")
     if os.path.exists(experiment_results_dir):
         shutil.copytree(
@@ -304,10 +383,14 @@ if __name__ == "__main__":
         )
 
     aggregate_plots(base_folder=idea_dir, model=args.model_agg_plots)
+    backup_experiment(idea_dir, reason="after_plot_aggregation")
 
-    shutil.rmtree(osp.join(idea_dir, "experiment_results"))
+    copied_experiment_results_dir = osp.join(idea_dir, "experiment_results")
+    if osp.exists(copied_experiment_results_dir):
+        shutil.rmtree(copied_experiment_results_dir)
 
     save_token_tracker(idea_dir)
+    backup_experiment(idea_dir, reason="after_token_tracker")
 
     if not args.skip_writeup:
         writeup_success = False
@@ -341,6 +424,7 @@ if __name__ == "__main__":
             print("Writeup process did not complete successfully after all retries.")
 
     save_token_tracker(idea_dir)
+    backup_experiment(idea_dir, reason="after_writeup")
 
     if not args.skip_review and not args.skip_writeup:
         # Perform paper review if the paper exists
@@ -358,6 +442,7 @@ if __name__ == "__main__":
             with open(osp.join(idea_dir, "review_img_cap_ref.json"), "w") as f:
                 json.dump(review_img_cap_ref, f, indent=4)
             print("Paper review completed.")
+            backup_experiment(idea_dir, reason="after_review")
 
     print("Start cleaning up processes")
     # Kill all mp and torch processes associated with this experiment
@@ -407,5 +492,6 @@ if __name__ == "__main__":
     #     current_process.kill()
 
     # exit the program
+    backup_experiment(idea_dir, reason="final")
     console_log.close()
     sys.exit(0)

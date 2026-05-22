@@ -251,6 +251,12 @@ Outputs are written under:
 experiments/<timestamp>_<idea_name>_attempt_0/
 ```
 
+Important files are also copied into a lightweight backup folder during the run:
+
+```text
+experiment_backups/<timestamp>_<idea_name>_attempt_0/
+```
+
 Useful files:
 
 ```text
@@ -263,7 +269,7 @@ logs/0-run/stage_*/tree_plot.html
 logs/0-run/stage_*/best_solution_*.py
 ```
 
-`experiments/` is ignored by Git.
+`experiments/` and `experiment_backups/` are ignored by Git.
 
 ## 9. Git Workflow Across Servers
 
