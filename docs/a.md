@@ -599,3 +599,86 @@ agent:
 ```
 
 아직 병렬 reviewer는 아니다. 우선 순차로 호출해서 로그 추적과 실패 원인 분석을 쉽게 유지한다. 이 구조가 안정되면 reviewer 호출만 병렬화할 수 있다.
+
+## 5차 구현 범위
+
+5차는 generated code agent가 Codex처럼 필요한 로컬 정보를 직접 물어보는 제한적 tool-use 단계다. 자유 shell을 주는 것이 아니라, 읽기 중심의 안전한 JSON action만 허용한다.
+
+허용 tool:
+
+```text
+list_files
+  - repo/workspace 안의 파일 목록 확인
+
+read_file
+  - repo/workspace 안의 텍스트 파일 일부 읽기
+
+rg
+  - repo/workspace 안에서 ripgrep 검색
+
+inspect_input
+  - 현재 workspace/input 구조와 파일 확장자 개수 관찰
+
+inspect_requirements
+  - requirements.txt, pyproject.toml, environment.yml 등 관찰
+
+inspect_imports
+  - 주요 Python module import 가능 여부 관찰
+
+finish
+  - 충분한 context를 모았다고 선언
+```
+
+금지:
+
+```text
+arbitrary shell
+network clone/search
+pip install
+git push/reset
+file write/delete
+```
+
+흐름:
+
+```text
+ToolUsingCodeAgent
+  -> JSON action 요청
+  -> 안전 tool 실행
+  -> 결과를 transcript에 기록
+  -> 최대 max_tool_steps 반복
+
+SequentialCodeMultiAgent
+  -> tool transcript를 Planner/Writer/Reviewers/Repairer에게 전달
+```
+
+프롬프트에 들어가는 tool context는 다음 원칙을 갖는다.
+
+```text
+Observed local tool context for this run.
+This is a snapshot, not a permanent guarantee.
+If a file or directory is not listed here, do not assume it exists.
+```
+
+config:
+
+```yaml
+agent:
+  code:
+    sequential_multi:
+      use_tool_loop: true
+      tool_loop:
+        max_tool_steps: 8
+        max_read_chars: 8000
+        max_rg_results: 30
+        allowed_tools:
+          - list_files
+          - read_file
+          - rg
+          - inspect_input
+          - inspect_requirements
+          - inspect_imports
+          - finish
+```
+
+이 단계는 아직 "모든 agent가 마음대로 도구를 계속 호출"하는 완전한 Codex 구조는 아니다. 우선 code generation 앞단에서 안전한 로컬 context를 능동적으로 수집하고, 그 transcript를 이후 agent들에게 공유한다.

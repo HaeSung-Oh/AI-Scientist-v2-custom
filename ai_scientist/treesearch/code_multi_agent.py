@@ -7,6 +7,7 @@ from typing import Any
 from rich import print
 
 from .backend import query
+from .code_tools import ToolUsingCodeAgent
 from .code_validation import validate_generated_code
 from .utils.response import extract_code, extract_text_up_to_code, wrap_code
 
@@ -64,6 +65,7 @@ class SequentialCodeMultiAgent:
             _cfg_get(self.multi_cfg, "require_experiment_data", False)
         )
         self.smoke_test_timeout = int(_cfg_get(self.multi_cfg, "smoke_test_timeout", 60))
+        self.use_tool_loop = bool(_cfg_get(self.multi_cfg, "use_tool_loop", True))
         self.reviewers = list(
             _cfg_get(
                 self.multi_cfg,
@@ -97,7 +99,7 @@ class SequentialCodeMultiAgent:
             "raise RuntimeError('Sequential code agent failed to return code.')",
         )
 
-    def _planner_prompt(self, base_prompt: Any) -> dict:
+    def _planner_prompt(self, base_prompt: Any, tool_context: str) -> dict:
         return {
             "Role": "You are CodePlannerAgent.",
             "Task": (
@@ -106,14 +108,16 @@ class SequentialCodeMultiAgent:
                 "small validated steps and identify likely failure points."
             ),
             "Original request": base_prompt,
+            "Observed local tool context": tool_context,
             "Output format": "Return concise bullet points only.",
         }
 
-    def _writer_prompt(self, base_prompt: Any, plan: str) -> dict:
+    def _writer_prompt(self, base_prompt: Any, plan: str, tool_context: str) -> dict:
         prompt = {
             "Role": "You are CodeWriterAgent.",
             "Planning notes": plan,
             "Original request": base_prompt,
+            "Observed local tool context": tool_context,
             "Additional requirements": [
                 "Return one complete executable Python code block.",
                 "Preserve the original request's metric-saving and runtime requirements.",
@@ -126,7 +130,12 @@ class SequentialCodeMultiAgent:
         return prompt
 
     def _reviewer_prompt(
-        self, reviewer_name: str, base_prompt: Any, plan: str, code: str
+        self,
+        reviewer_name: str,
+        base_prompt: Any,
+        plan: str,
+        code: str,
+        tool_context: str,
     ) -> dict:
         focus = REVIEWER_FOCI.get(
             reviewer_name,
@@ -145,6 +154,7 @@ class SequentialCodeMultiAgent:
             ),
             "Original request": base_prompt,
             "Planning notes": plan,
+            "Observed local tool context": tool_context,
             "Code to review": wrap_code(code),
             "Primary focus": focus,
             "Output format": (
@@ -153,12 +163,16 @@ class SequentialCodeMultiAgent:
             ),
         }
 
-    def _run_reviewers(self, base_prompt: Any, plan: str, code: str) -> str:
+    def _run_reviewers(
+        self, base_prompt: Any, plan: str, code: str, tool_context: str
+    ) -> str:
         feedback_parts = []
         for reviewer_name in self.reviewers:
             feedback = self._query(
                 reviewer_name,
-                self._reviewer_prompt(reviewer_name, base_prompt, plan, code),
+                self._reviewer_prompt(
+                    reviewer_name, base_prompt, plan, code, tool_context
+                ),
             )
             feedback_parts.append(f"## {reviewer_name}\n{feedback.strip()}")
         combined = "\n\n".join(feedback_parts)
@@ -177,6 +191,7 @@ class SequentialCodeMultiAgent:
         code: str,
         feedback: str,
         validation_feedback: str | None = None,
+        tool_context: str = "",
     ) -> dict:
         return {
             "Role": "You are CodeRepairAgent.",
@@ -186,6 +201,7 @@ class SequentialCodeMultiAgent:
             ),
             "Original request": base_prompt,
             "Planning notes": plan,
+            "Observed local tool context": tool_context,
             "Previous code": wrap_code(code),
             "Reviewer feedback": feedback,
             "Validation feedback": validation_feedback or "No validation feedback yet.",
@@ -193,10 +209,20 @@ class SequentialCodeMultiAgent:
         }
 
     def run(self, base_prompt: Any, retries: int = 3) -> tuple[str, str]:
-        plan = self._query("planning", self._planner_prompt(base_prompt))
-        writer_response = self._query("writing", self._writer_prompt(base_prompt, plan))
+        tool_context = (
+            ToolUsingCodeAgent(self.cfg, workspace_dir=self.workspace_dir).run(base_prompt)
+            if self.use_tool_loop
+            else "Tool loop disabled."
+        )
+        plan = self._query("planning", self._planner_prompt(base_prompt, tool_context))
+        writer_response = self._query(
+            "writing", self._writer_prompt(base_prompt, plan, tool_context)
+        )
         writer_plan, code = self._extract_or_repairable_code(writer_response)
-        combined_plan = f"{plan}\n\nInitial writer notes:\n{writer_plan}".strip()
+        combined_plan = (
+            f"Tool context:\n{tool_context}\n\n"
+            f"{plan}\n\nInitial writer notes:\n{writer_plan}"
+        ).strip()
 
         review_feedback = ""
         for review_round in range(self.max_review_rounds):
@@ -204,12 +230,20 @@ class SequentialCodeMultiAgent:
                 "[cyan]SequentialCodeMultiAgent: "
                 f"review round {review_round + 1}/{self.max_review_rounds}[/cyan]"
             )
-            review_feedback = self._run_reviewers(base_prompt, combined_plan, code)
+            review_feedback = self._run_reviewers(
+                base_prompt, combined_plan, code, tool_context
+            )
             if self._all_reviewers_passed(review_feedback):
                 break
             repair_response = self._query(
                 f"review repair {review_round + 1}/{self.max_review_rounds}",
-                self._repair_prompt(base_prompt, combined_plan, code, review_feedback),
+                self._repair_prompt(
+                    base_prompt,
+                    combined_plan,
+                    code,
+                    review_feedback,
+                    tool_context=tool_context,
+                ),
             )
             repair_plan, code = self._extract_or_repairable_code(repair_response)
             combined_plan = f"{combined_plan}\n\nReview repair notes:\n{repair_plan}".strip()
@@ -247,6 +281,7 @@ class SequentialCodeMultiAgent:
                     code,
                     review_feedback or "No reviewer feedback.",
                     validation_feedback,
+                    tool_context=tool_context,
                 ),
             )
             repair_plan, code = self._extract_or_repairable_code(repair_response)
