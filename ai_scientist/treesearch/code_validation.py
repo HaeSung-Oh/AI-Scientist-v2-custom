@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -57,6 +61,10 @@ def validate_generated_code(
     run_py_compile: bool = True,
     run_import_check: bool = True,
     reject_synthetic_only: bool = True,
+    run_smoke_test: bool = False,
+    require_experiment_data: bool = False,
+    workspace_dir: str | Path | None = None,
+    smoke_test_timeout: int = 60,
 ) -> CodeValidationResult:
     checks: list[str] = []
     errors: list[str] = []
@@ -115,5 +123,99 @@ def validate_generated_code(
             )
         else:
             checks.append("No obvious synthetic-only data markers found.")
+
+    if run_smoke_test:
+        if "AI_SCIENTIST_SMOKE_TEST" not in code:
+            errors.append(
+                "Smoke test is enabled, but generated code does not check "
+                "AI_SCIENTIST_SMOKE_TEST. Add a fast smoke-test branch that "
+                "validates data loading, one tiny model forward/train step, and "
+                "experiment_data.npy saving before full training."
+            )
+            return CodeValidationResult(False, checks, errors, warnings)
+
+        smoke_result = run_generated_smoke_test(
+            code,
+            workspace_dir=workspace_dir,
+            timeout=smoke_test_timeout,
+            require_experiment_data=require_experiment_data,
+        )
+        checks.extend(smoke_result.checks)
+        errors.extend(smoke_result.errors)
+        warnings.extend(smoke_result.warnings)
+
+    return CodeValidationResult(not errors, checks, errors, warnings)
+
+
+def run_generated_smoke_test(
+    code: str,
+    *,
+    workspace_dir: str | Path | None,
+    timeout: int,
+    require_experiment_data: bool,
+) -> CodeValidationResult:
+    checks: list[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    base_workspace = Path(workspace_dir).resolve() if workspace_dir else None
+    with tempfile.TemporaryDirectory(prefix="ai_scientist_smoke_") as tmp:
+        smoke_dir = Path(tmp)
+        runfile = smoke_dir / "runfile.py"
+        runfile.write_text(code, encoding="utf-8")
+        (smoke_dir / "working").mkdir(exist_ok=True)
+
+        if base_workspace is not None:
+            input_src = base_workspace / "input"
+            if input_src.exists():
+                try:
+                    (smoke_dir / "input").symlink_to(input_src, target_is_directory=True)
+                except OSError:
+                    warnings.append(
+                        f"Could not symlink smoke-test input directory from {input_src}."
+                    )
+
+        env = os.environ.copy()
+        env["AI_SCIENTIST_SMOKE_TEST"] = "1"
+        env.setdefault("MPLCONFIGDIR", str(smoke_dir / ".matplotlib"))
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(runfile)],
+                cwd=smoke_dir,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            errors.append(
+                f"Smoke test timed out after {timeout}s. Output preview: "
+                + output[-2000:]
+            )
+            return CodeValidationResult(False, checks, errors, warnings)
+
+        output = proc.stdout or ""
+        if proc.returncode != 0:
+            errors.append(
+                f"Smoke test exited with code {proc.returncode}. Output preview: "
+                + output[-3000:]
+            )
+            return CodeValidationResult(False, checks, errors, warnings)
+
+        checks.append("AI_SCIENTIST_SMOKE_TEST execution passed.")
+
+        expected_data = smoke_dir / "working" / "experiment_data.npy"
+        if require_experiment_data:
+            if expected_data.exists():
+                checks.append("Smoke test created working/experiment_data.npy.")
+            else:
+                errors.append(
+                    "Smoke test passed but did not create working/experiment_data.npy."
+                )
+        elif not expected_data.exists():
+            warnings.append("Smoke test did not create working/experiment_data.npy.")
 
     return CodeValidationResult(not errors, checks, errors, warnings)

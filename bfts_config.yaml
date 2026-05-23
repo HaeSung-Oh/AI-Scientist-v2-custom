@@ -64,6 +64,9 @@ agent:
       run_py_compile: true
       run_import_check: true
       reject_synthetic_only: true
+      run_smoke_test: true
+      smoke_test_timeout: 60
+      require_experiment_data: true
 
   # LLM settings for evaluating program output / tracebacks
   feedback:

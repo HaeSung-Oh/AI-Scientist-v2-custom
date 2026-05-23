@@ -492,3 +492,50 @@ MetricReviewer
 5. synthetic-only로 보이는 코드는 경고 또는 실패 처리된다.
 6. 모든 중간 agent 응답과 validation 결과가 로그에 저장된다.
 ```
+
+## 2차 구현 범위
+
+2차는 순차 멀티 에이전트가 만든 코드를 실제로 짧게 실행해 보는 단계다. 전체 학습을 돌리는 것이 아니라, 생성 코드 안에 smoke-test branch를 강제한다.
+
+생성 코드는 다음 환경 변수를 확인해야 한다.
+
+```python
+os.environ.get("AI_SCIENTIST_SMOKE_TEST") == "1"
+```
+
+이 모드에서는 다음만 수행하고 종료해야 한다.
+
+```text
+1. 필요한 데이터 경로가 있는지 확인
+2. 가능하면 실제 데이터에서 작은 batch 하나를 읽음
+3. model forward 또는 tiny train step 1회를 수행
+4. working/experiment_data.npy를 저장
+5. SMOKE_TEST_PASS를 출력
+6. full training 전에 종료
+```
+
+2차에서 추가된 validation:
+
+```text
+run_smoke_test: true
+smoke_test_timeout: 60
+require_experiment_data: true
+```
+
+이제 최종 코드 반환 전 validation은 다음 순서로 돈다.
+
+```text
+1. Python syntax compile
+2. top-level import availability check
+3. synthetic-only marker scan
+4. AI_SCIENTIST_SMOKE_TEST branch 존재 확인
+5. subprocess로 smoke test 실제 실행
+6. working/experiment_data.npy 생성 확인
+```
+
+주의할 점:
+
+```text
+smoke test는 generated code가 제대로 branch를 구현해야만 빠르게 끝난다.
+branch가 없거나 무시되면 validation이 실패하고 RepairAgent가 다시 코드를 고친다.
+```

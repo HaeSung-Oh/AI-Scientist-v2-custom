@@ -271,6 +271,7 @@ class MinimalAgent:
         self.evaluation_metrics = evaluation_metrics
         self.stage_name = stage_name
         self.data_preview = None
+        self.workspace_dir = None
 
     def _task_mentions_any(self, keywords: list[str]) -> bool:
         task_text = (self.task_desc or "").lower()
@@ -713,7 +714,9 @@ class MinimalAgent:
     def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str]:
         """Generate a natural language plan + code in the same LLM call and split them apart."""
         if getattr(self.cfg.agent.code, "mode", "single_shot") == "sequential_multi":
-            return SequentialCodeMultiAgent(self.cfg).run(prompt, retries=retries)
+            return SequentialCodeMultiAgent(
+                self.cfg, workspace_dir=self.workspace_dir
+            ).run(prompt, retries=retries)
 
         completion_text = None
         for _ in range(retries):
@@ -1288,7 +1291,9 @@ class ParallelAgent:
     def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str]:
         """Generate a natural language plan + code in the same LLM call and split them apart."""
         if getattr(self.cfg.agent.code, "mode", "single_shot") == "sequential_multi":
-            return SequentialCodeMultiAgent(self.cfg).run(prompt, retries=retries)
+            return SequentialCodeMultiAgent(self.cfg, workspace_dir=self.cfg.workspace_dir).run(
+                prompt, retries=retries
+            )
 
         completion_text = None
         for _ in range(retries):
@@ -1509,6 +1514,13 @@ class ParallelAgent:
         workspace = os.path.join(cfg.workspace_dir, f"process_{process_id}")
         os.makedirs(workspace, exist_ok=True)
         print(f"Process {process_id} using workspace: {workspace}")
+        input_src = os.path.join(cfg.workspace_dir, "input")
+        input_dst = os.path.join(workspace, "input")
+        if os.path.exists(input_src) and not os.path.exists(input_dst):
+            try:
+                os.symlink(input_src, input_dst, target_is_directory=True)
+            except OSError:
+                pass
         # Create process-specific working directory
         working_dir = os.path.join(workspace, "working")
         os.makedirs(working_dir, exist_ok=True)
@@ -1528,6 +1540,7 @@ class ParallelAgent:
             evaluation_metrics=evaluation_metrics,
             stage_name=stage_name,
         )
+        worker_agent.workspace_dir = workspace
 
         # Create interpreter instance for worker process
         print("Creating Interpreter")

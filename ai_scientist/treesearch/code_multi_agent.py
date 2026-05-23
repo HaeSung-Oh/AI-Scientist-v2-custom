@@ -22,9 +22,10 @@ def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
 class SequentialCodeMultiAgent:
     """Planner -> writer -> reviewer -> repairer loop for generated code."""
 
-    def __init__(self, cfg: Any):
+    def __init__(self, cfg: Any, workspace_dir: Any = None):
         self.cfg = cfg
         self.code_cfg = cfg.agent.code
+        self.workspace_dir = workspace_dir or cfg.workspace_dir
         self.multi_cfg = _cfg_get(self.code_cfg, "sequential_multi", {}) or {}
         self.max_review_rounds = int(_cfg_get(self.multi_cfg, "max_review_rounds", 1))
         self.max_repair_rounds = int(_cfg_get(self.multi_cfg, "max_repair_rounds", 3))
@@ -33,6 +34,11 @@ class SequentialCodeMultiAgent:
         self.reject_synthetic_only = bool(
             _cfg_get(self.multi_cfg, "reject_synthetic_only", True)
         )
+        self.run_smoke_test = bool(_cfg_get(self.multi_cfg, "run_smoke_test", False))
+        self.require_experiment_data = bool(
+            _cfg_get(self.multi_cfg, "require_experiment_data", False)
+        )
+        self.smoke_test_timeout = int(_cfg_get(self.multi_cfg, "smoke_test_timeout", 60))
 
     def _query(self, role: str, system_message: Any, user_message: Any = None) -> str:
         print(f"[cyan]SequentialCodeMultiAgent: {role}[/cyan]")
@@ -76,6 +82,8 @@ class SequentialCodeMultiAgent:
                 "Preserve the original request's metric-saving and runtime requirements.",
                 "Avoid optional packages unless they are clearly available from the runtime package guidance.",
                 "Do not validate the core research claim using only synthetic data.",
+                "Include a fast smoke-test branch guarded by os.environ.get('AI_SCIENTIST_SMOKE_TEST') == '1'.",
+                "In smoke-test mode, validate dataset paths, load one tiny batch if data exists, run one model forward or one tiny train step, save working/experiment_data.npy, print SMOKE_TEST_PASS, and exit before full training.",
             ],
         }
         return prompt
@@ -96,6 +104,7 @@ class SequentialCodeMultiAgent:
                 "invented dataset paths",
                 "synthetic-only validation",
                 "metric saving to experiment_data.npy",
+                "AI_SCIENTIST_SMOKE_TEST branch that performs a tiny real execution check",
                 "PyTorch tensor shape and target/output compatibility",
                 "runtime feasibility within the configured timeout",
             ],
@@ -155,6 +164,10 @@ class SequentialCodeMultiAgent:
                 run_py_compile=self.run_py_compile,
                 run_import_check=self.run_import_check,
                 reject_synthetic_only=self.reject_synthetic_only,
+                run_smoke_test=self.run_smoke_test,
+                require_experiment_data=self.require_experiment_data,
+                workspace_dir=self.workspace_dir,
+                smoke_test_timeout=self.smoke_test_timeout,
             )
             validation_feedback = validation.to_feedback()
             print(f"[cyan]{validation_feedback}[/cyan]")
