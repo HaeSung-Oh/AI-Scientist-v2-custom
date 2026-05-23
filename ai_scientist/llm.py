@@ -492,8 +492,12 @@ def create_client(model) -> tuple[Any, str]:
     elif model.startswith("ollama/"):
         print(f"Using Ollama with model {model}.")
         return openai.OpenAI(
-            api_key=os.environ.get("OLLAMA_API_KEY", ""),
-            base_url="http://localhost:11434/v1",
+            api_key=os.environ.get("OLLAMA_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or "ollama",
+            base_url=os.environ.get("OLLAMA_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or "http://localhost:11434/v1",
         ), model
     elif "gpt" in model:
         print(f"Using OpenAI API with model {model}.")

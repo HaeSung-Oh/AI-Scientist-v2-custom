@@ -121,7 +121,7 @@ IDEA JSON:
 
 Ensure the JSON is properly formatted for automatic parsing.
 
-Note: You must perform at least two distinct literature searches before finalizing your idea to ensure it is well-informed by recent research. Prefer mixing search sources, for example Semantic Scholar plus PubMed for biomedical grounding, or arXiv plus OpenAlex for recent ML methods."""
+Note: You must satisfy the runtime literature-search requirements before finalizing your idea. Prefer mixing search sources, for example Semantic Scholar plus PubMed for biomedical grounding, or arXiv plus OpenAlex for recent ML methods."""
 
 # Define the initial idea generation prompt
 idea_generation_prompt = """{workshop_description}
@@ -135,6 +135,8 @@ Here are the proposals that you have already generated:
 '''
 
 Begin by deeply investigating an interestingly new high-level research proposal that differs from what you have previously proposed. Do not finalize immediately unless the literature search and validation reasoning are already strong enough. Prefer searching first.
+
+{search_requirements}
 """
 
 # Define the reflection prompt
@@ -157,6 +159,9 @@ If you have new information from tools, such as literature search results, incor
 Results from your last action (if any):
 
 {last_tool_results}
+
+Current literature-search requirement/status:
+{search_requirements}
 """
 
 
@@ -242,6 +247,24 @@ def validate_final_idea(idea: Dict) -> List[str]:
     return missing
 
 
+def search_result_is_successful(result: str) -> bool:
+    if not result:
+        return False
+
+    result_lower = result.strip().lower()
+    failure_markers = [
+        "unavailable:",
+        "error using tool",
+        "no papers found",
+        "no arxiv papers found",
+        "no pubmed papers found",
+        "no openalex works found",
+        "no searchgooglescholar results found",
+        "no searchweb results found",
+    ]
+    return not any(marker in result_lower for marker in failure_markers)
+
+
 def generate_temp_free_idea(
     idea_fname: str,
     client: Any,
@@ -249,6 +272,8 @@ def generate_temp_free_idea(
     workshop_description: str,
     max_num_generations: int = 20,
     num_reflections: int = 5,
+    min_num_searches: int = 4,
+    min_num_search_sources: int = 3,
     reload_ideas: bool = True,
 ) -> List[Dict]:
     idea_str_archive = []
@@ -271,14 +296,26 @@ def generate_temp_free_idea(
             last_tool_results = ""
             idea_finalized = False
             msg_history = []
-            num_searches = 0
+            successful_searches = 0
+            successful_search_sources = set()
 
             for reflection_round in range(num_reflections):
+                search_requirements = (
+                    f"Before FinalizeIdea, perform at least {min_num_searches} "
+                    f"successful literature searches from at least "
+                    f"{min_num_search_sources} distinct search sources. Searches "
+                    "that return no results, API-key unavailable messages, or errors "
+                    "do not count. Current progress: "
+                    f"{successful_searches}/{min_num_searches} successful searches; "
+                    f"{len(successful_search_sources)}/{min_num_search_sources} "
+                    f"sources used ({', '.join(sorted(successful_search_sources)) or 'none'})."
+                )
                 if reflection_round == 0:
                     # Use the initial idea generation prompt
                     prompt_text = idea_generation_prompt.format(
                         workshop_description=workshop_description,
                         prev_ideas_string=prev_ideas_string,
+                        search_requirements=search_requirements,
                     )
                 else:
                     # Use the reflection prompt, including tool results if any
@@ -286,6 +323,7 @@ def generate_temp_free_idea(
                         current_round=reflection_round + 1,
                         num_reflections=num_reflections,
                         last_tool_results=last_tool_results or "No new results.",
+                        search_requirements=search_requirements,
                     )
 
                 response_text, msg_history = get_response_from_llm(
@@ -318,14 +356,39 @@ def generate_temp_free_idea(
                             result = tool.use_tool(**arguments_json)
                             last_tool_results = result
                             if action.startswith("Search"):
-                                num_searches += 1
+                                if search_result_is_successful(result):
+                                    successful_searches += 1
+                                    successful_search_sources.add(action)
+                                    print(
+                                        "Successful literature searches: "
+                                        f"{successful_searches}/{min_num_searches}; "
+                                        "sources: "
+                                        f"{len(successful_search_sources)}/"
+                                        f"{min_num_search_sources}"
+                                    )
+                                else:
+                                    print(
+                                        "Search did not count toward the requirement "
+                                        "because it returned no usable results."
+                                    )
                         except Exception as e:
                             last_tool_results = f"Error using tool {action}: {str(e)}"
                     elif action == "FinalizeIdea":
-                        if num_searches < 2:
+                        if (
+                            successful_searches < min_num_searches
+                            or len(successful_search_sources) < min_num_search_sources
+                        ):
                             last_tool_results = (
-                                "FinalizeIdea rejected: perform at least two distinct "
-                                "literature search actions before finalizing."
+                                "FinalizeIdea rejected: perform at least "
+                                f"{min_num_searches} successful literature searches "
+                                f"from at least {min_num_search_sources} distinct "
+                                "search sources before finalizing. Searches that "
+                                "return no results, API-key unavailable messages, or "
+                                "errors do not count. Current progress: "
+                                f"{successful_searches}/{min_num_searches} successful "
+                                "searches; "
+                                f"{len(successful_search_sources)}/"
+                                f"{min_num_search_sources} sources."
                             )
                             print(last_tool_results)
                             continue
@@ -424,7 +487,35 @@ if __name__ == "__main__":
         default=5,
         help="Number of reflection rounds per proposal.",
     )
+    parser.add_argument(
+        "--min-num-searches",
+        type=int,
+        default=4,
+        help=(
+            "Minimum number of successful literature searches required before "
+            "finalizing each proposal. Searches with no results, unavailable "
+            "API keys, or errors do not count."
+        ),
+    )
+    parser.add_argument(
+        "--min-num-search-sources",
+        type=int,
+        default=3,
+        help=(
+            "Minimum number of distinct successful search sources required "
+            "before finalizing each proposal."
+        ),
+    )
     args = parser.parse_args()
+    if args.min_num_search_sources > args.min_num_searches:
+        parser.error(
+            "--min-num-search-sources cannot be greater than --min-num-searches."
+        )
+    if args.num_reflections <= args.min_num_searches:
+        parser.error(
+            "--num-reflections must be greater than --min-num-searches so there "
+            "is at least one round left to finalize the proposal."
+        )
 
     # Create the LLM client
     client, client_model = create_client(args.model)
@@ -444,5 +535,7 @@ if __name__ == "__main__":
         workshop_description=workshop_description,
         max_num_generations=args.max_num_generations,
         num_reflections=args.num_reflections,
+        min_num_searches=args.min_num_searches,
+        min_num_search_sources=args.min_num_search_sources,
     )
     print(f"{args.workshop_file} generated {len(ideas)} ideas.")
