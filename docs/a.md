@@ -841,3 +841,110 @@ Do not force a domain-specific scaffold onto unrelated tasks.
 ```
 
 이렇게 하면 polyp 연구에는 polyp scaffold 후보가 들어갈 수 있지만, 시계열 연구에는 timeseries scaffold 후보가 들어가고, 둘 다 애매하면 generic으로 fallback한다.
+
+## 남은 TODO
+
+현재 구현은 다음까지 완료된 상태다.
+
+```text
+single-shot code generation
+  -> sequential multi-agent
+  -> restricted read-only tool loop
+  -> focused reviewers
+  -> smoke-test validation
+  -> validation 실패 후 tool 재탐색
+  -> BFTS debug node tool-aware repair
+  -> reviewer 병렬화
+  -> task-adaptive scaffold guidance
+```
+
+추후 진행하면 좋은 항목:
+
+```text
+1. patch 단위 편집
+   - 지금은 전체 code block을 다시 반환한다.
+   - 다음에는 unified diff 또는 structured patch로 작은 수정만 하게 만들 수 있다.
+
+2. reviewer별 tool-use
+   - 지금은 ToolUsingCodeAgent가 context를 모아 공유한다.
+   - 나중에는 DataReviewer, PackageReviewer 등이 필요할 때 직접 read_file/rg를 요청하게 만들 수 있다.
+
+3. GitHub/문서 검색 allowlist tool
+   - 기본 off.
+   - idea/config에 명시된 repo 또는 allowlist URL만 clone/read/search.
+   - 외부 코드 사용 로그와 라이선스 주의가 필요하다.
+
+4. full run 중간 실시간 repair
+   - 현재는 full run 실패 후 debug node에서 repair한다.
+   - 장기적으로는 실행 중 로그 스트리밍을 보고 timeout/OOM 전에 중단 및 repair할 수 있다.
+
+5. scaffold code template 확장
+   - 현재는 guidance 중심이다.
+   - 나중에는 generic_timeseries.py, generic_segmentation.py 같은 실제 starter code template을 제공할 수 있다.
+
+6. model routing
+   - planner/reviewer는 qwen3, writer/repairer는 coder 모델처럼 역할별 모델을 다르게 쓰는 옵션.
+```
+
+## 실행 방법
+
+먼저 preflight만 확인한다.
+
+```bash
+conda run -n ai_scientist python launch_scientist_bfts.py \
+  --load_ideas ai_scientist/ideas/my_topic.json \
+  --idea_idx 0 \
+  --num_cite_rounds 2 \
+  --preflight-only \
+  --no-auto-download-polyp-data
+```
+
+실제 BFTS 실험을 빠르게 확인하려면 writeup/review를 끄고 실행한다.
+
+```bash
+conda run -n ai_scientist python launch_scientist_bfts.py \
+  --load_ideas ai_scientist/ideas/my_topic.json \
+  --idea_idx 0 \
+  --num_cite_rounds 2 \
+  --skip_writeup \
+  --skip_review
+```
+
+코드 생성 전용 모델 preset을 쓰고 싶으면 `--code coder`를 추가한다.
+
+```bash
+conda run -n ai_scientist python launch_scientist_bfts.py \
+  --load_ideas ai_scientist/ideas/my_topic.json \
+  --idea_idx 0 \
+  --num_cite_rounds 2 \
+  --code coder \
+  --skip_writeup \
+  --skip_review
+```
+
+완전한 writeup/review까지 돌리려면 `--skip_writeup --skip_review`를 빼면 된다. 다만 먼저 BFTS 실험 코드가 정상적으로 결과를 만드는지 확인한 뒤 writeup을 붙이는 것을 권장한다.
+
+현재 기본 `bfts_config.yaml`은 다음 코드 생성 모드를 사용한다.
+
+```yaml
+agent:
+  code:
+    mode: sequential_multi
+    sequential_multi:
+      run_smoke_test: true
+      use_tool_loop: true
+      tool_repair_on_validation_failure: true
+      debug_with_tool_repair: true
+      parallel_reviewers: true
+      use_scaffold_guidance: true
+```
+
+실행 결과는 `experiments/<timestamp>_<idea_name>_attempt_0/` 아래에 저장된다. 주요 확인 파일:
+
+```text
+run_console.log
+bfts_config.yaml
+logs/0-run/journal.json
+logs/0-run/stage_progress.json
+logs/0-run/experiment_results/
+```
