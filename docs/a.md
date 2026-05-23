@@ -539,3 +539,63 @@ require_experiment_data: true
 smoke test는 generated code가 제대로 branch를 구현해야만 빠르게 끝난다.
 branch가 없거나 무시되면 validation이 실패하고 RepairAgent가 다시 코드를 고친다.
 ```
+
+## 3차 구현 범위
+
+3차는 reviewer를 하나의 일반 리뷰어에서 역할별 리뷰어로 쪼개는 단계다. 목적은 한 reviewer가 모든 문제를 대충 훑는 대신, 실패가 자주 나는 영역을 각각 다른 관점으로 보게 만드는 것이다.
+
+기본 reviewer 목록:
+
+```text
+PackageReviewer
+  - missing imports
+  - wrong import paths
+  - package/API hallucinations
+  - optional dependency guard 누락
+
+DataReviewer
+  - invented dataset paths
+  - prepared input/ directory 미사용
+  - synthetic-only validation
+  - image/mask shape, dtype, split 문제
+
+TorchShapeReviewer
+  - model input/output tensor shape
+  - loss target shape/dtype mismatch
+  - device placement
+  - DataLoader batch handling
+  - tiny smoke-test feasibility
+
+MetricReviewer
+  - evaluation metric 누락
+  - working/experiment_data.npy 저장 누락
+  - AI_SCIENTIST_SMOKE_TEST branch 누락
+  - runtime feasibility
+```
+
+흐름:
+
+```text
+CodeWriterAgent
+  -> PackageReviewer
+  -> DataReviewer
+  -> TorchShapeReviewer
+  -> MetricReviewer
+  -> feedback 통합
+  -> CodeRepairAgent
+```
+
+config:
+
+```yaml
+agent:
+  code:
+    sequential_multi:
+      reviewers:
+        - PackageReviewer
+        - DataReviewer
+        - TorchShapeReviewer
+        - MetricReviewer
+```
+
+아직 병렬 reviewer는 아니다. 우선 순차로 호출해서 로그 추적과 실패 원인 분석을 쉽게 유지한다. 이 구조가 안정되면 reviewer 호출만 병렬화할 수 있다.

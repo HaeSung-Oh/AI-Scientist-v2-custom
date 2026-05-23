@@ -11,6 +11,31 @@ from .code_validation import validate_generated_code
 from .utils.response import extract_code, extract_text_up_to_code, wrap_code
 
 
+REVIEWER_FOCI = {
+    "PackageReviewer": [
+        "missing imports, wrong import paths, and package/API hallucinations",
+        "optional dependency use without guards",
+        "standard-library/API typos such as wrong keyword names",
+    ],
+    "DataReviewer": [
+        "invented dataset paths and failure to use prepared input/ directories",
+        "synthetic-only validation or random data used as main evidence",
+        "data/mask shape, dtype, normalization, and train/validation split issues",
+    ],
+    "TorchShapeReviewer": [
+        "model input/output tensor shape compatibility",
+        "loss target shape/dtype mismatches",
+        "device placement, DataLoader batch handling, and tiny smoke-test feasibility",
+    ],
+    "MetricReviewer": [
+        "missing or misleading evaluation metrics",
+        "failure to save working/experiment_data.npy",
+        "missing AI_SCIENTIST_SMOKE_TEST branch or incomplete smoke-test output",
+        "runtime feasibility within the configured timeout",
+    ],
+}
+
+
 def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
     if obj is None:
         return default
@@ -39,6 +64,18 @@ class SequentialCodeMultiAgent:
             _cfg_get(self.multi_cfg, "require_experiment_data", False)
         )
         self.smoke_test_timeout = int(_cfg_get(self.multi_cfg, "smoke_test_timeout", 60))
+        self.reviewers = list(
+            _cfg_get(
+                self.multi_cfg,
+                "reviewers",
+                [
+                    "PackageReviewer",
+                    "DataReviewer",
+                    "TorchShapeReviewer",
+                    "MetricReviewer",
+                ],
+            )
+        )
 
     def _query(self, role: str, system_message: Any, user_message: Any = None) -> str:
         print(f"[cyan]SequentialCodeMultiAgent: {role}[/cyan]")
@@ -88,31 +125,50 @@ class SequentialCodeMultiAgent:
         }
         return prompt
 
-    def _reviewer_prompt(self, base_prompt: Any, plan: str, code: str) -> dict:
+    def _reviewer_prompt(
+        self, reviewer_name: str, base_prompt: Any, plan: str, code: str
+    ) -> dict:
+        focus = REVIEWER_FOCI.get(
+            reviewer_name,
+            [
+                "real bugs",
+                "experiment-invalidating issues",
+                "runtime feasibility",
+            ],
+        )
         return {
-            "Role": "You are CodeReviewerAgent.",
+            "Role": f"You are {reviewer_name}.",
             "Task": (
                 "Review this generated research experiment code before execution. "
-                "Focus on real bugs and experiment-invalidating issues."
+                "Be strict, but only report issues that are likely to break execution, "
+                "invalidate the experiment, or waste substantial runtime."
             ),
             "Original request": base_prompt,
             "Planning notes": plan,
             "Code to review": wrap_code(code),
-            "Review checklist": [
-                "syntax and obvious Python API mistakes",
-                "missing or suspicious imports",
-                "invented dataset paths",
-                "synthetic-only validation",
-                "metric saving to experiment_data.npy",
-                "AI_SCIENTIST_SMOKE_TEST branch that performs a tiny real execution check",
-                "PyTorch tensor shape and target/output compatibility",
-                "runtime feasibility within the configured timeout",
-            ],
+            "Primary focus": focus,
             "Output format": (
                 "Return REVIEW_PASS if no material issues remain. Otherwise return "
-                "a concise numbered list of required fixes."
+                "a concise numbered list of required fixes. Do not comment on style."
             ),
         }
+
+    def _run_reviewers(self, base_prompt: Any, plan: str, code: str) -> str:
+        feedback_parts = []
+        for reviewer_name in self.reviewers:
+            feedback = self._query(
+                reviewer_name,
+                self._reviewer_prompt(reviewer_name, base_prompt, plan, code),
+            )
+            feedback_parts.append(f"## {reviewer_name}\n{feedback.strip()}")
+        combined = "\n\n".join(feedback_parts)
+        if all("REVIEW_PASS" in part.upper() for part in feedback_parts):
+            return "REVIEW_PASS\n\n" + combined
+        return combined
+
+    @staticmethod
+    def _all_reviewers_passed(review_feedback: str) -> bool:
+        return review_feedback.lstrip().upper().startswith("REVIEW_PASS")
 
     def _repair_prompt(
         self,
@@ -144,11 +200,12 @@ class SequentialCodeMultiAgent:
 
         review_feedback = ""
         for review_round in range(self.max_review_rounds):
-            review_feedback = self._query(
-                f"review {review_round + 1}/{self.max_review_rounds}",
-                self._reviewer_prompt(base_prompt, combined_plan, code),
+            print(
+                "[cyan]SequentialCodeMultiAgent: "
+                f"review round {review_round + 1}/{self.max_review_rounds}[/cyan]"
             )
-            if "REVIEW_PASS" in review_feedback.upper():
+            review_feedback = self._run_reviewers(base_prompt, combined_plan, code)
+            if self._all_reviewers_passed(review_feedback):
                 break
             repair_response = self._query(
                 f"review repair {review_round + 1}/{self.max_review_rounds}",

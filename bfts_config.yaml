@@ -67,6 +67,11 @@ agent:
       run_smoke_test: true
       smoke_test_timeout: 60
       require_experiment_data: true
+      reviewers:
+        - PackageReviewer
+        - DataReviewer
+        - TorchShapeReviewer
+        - MetricReviewer
 
   # LLM settings for evaluating program output / tracebacks
   feedback:
