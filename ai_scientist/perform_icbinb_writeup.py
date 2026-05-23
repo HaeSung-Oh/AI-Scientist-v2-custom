@@ -720,25 +720,50 @@ def filter_experiment_summaries(exp_summaries, step_name):
 
     filtered_summaries = {}
     for stage_name in exp_summaries.keys():
+        stage_summary = exp_summaries[stage_name]
         if stage_name in {"BASELINE_SUMMARY", "RESEARCH_SUMMARY"}:
             filtered_summaries[stage_name] = {}
-            for key in exp_summaries[stage_name].keys():
+            if not isinstance(stage_summary, dict):
+                print(f"Warning: {stage_name} is not a dict. Skipping it.")
+                continue
+            if stage_summary.get("skipped"):
+                filtered_summaries[stage_name] = stage_summary
+                continue
+            for key in stage_summary.keys():
                 if key in {"best node"}:
                     filtered_summaries[stage_name][key] = {}
-                    for node_key in exp_summaries[stage_name][key].keys():
+                    if not isinstance(stage_summary[key], dict):
+                        print(f"Warning: {stage_name}.{key} is not a dict. Skipping it.")
+                        continue
+                    for node_key in stage_summary[key].keys():
                         if node_key in node_keys_to_keep:
                             filtered_summaries[stage_name][key][node_key] = (
-                                exp_summaries[stage_name][key][node_key]
+                                stage_summary[key][node_key]
                             )
         elif stage_name == "ABLATION_SUMMARY" and step_name == "plot_aggregation":
             filtered_summaries[stage_name] = {}
-            for ablation_summary in exp_summaries[stage_name]:
-                filtered_summaries[stage_name][ablation_summary["ablation_name"]] = {}
+            if isinstance(stage_summary, dict) and stage_summary.get("skipped"):
+                filtered_summaries[stage_name] = stage_summary
+                continue
+            if isinstance(stage_summary, dict):
+                stage_summary = [stage_summary]
+            if not isinstance(stage_summary, list):
+                print(f"Warning: {stage_name} is not a list. Skipping it.")
+                continue
+            for ablation_summary in stage_summary:
+                if not isinstance(ablation_summary, dict):
+                    print(f"Warning: invalid ablation summary item: {ablation_summary}")
+                    continue
+                ablation_name = ablation_summary.get("ablation_name")
+                if not ablation_name:
+                    print("Warning: ablation summary missing ablation_name. Skipping it.")
+                    continue
+                filtered_summaries[stage_name][ablation_name] = {}
                 for node_key in ablation_summary.keys():
                     if node_key in node_keys_to_keep:
-                        filtered_summaries[stage_name][
-                            ablation_summary["ablation_name"]
-                        ][node_key] = ablation_summary[node_key]
+                        filtered_summaries[stage_name][ablation_name][node_key] = (
+                            ablation_summary[node_key]
+                        )
     return filtered_summaries
 
 

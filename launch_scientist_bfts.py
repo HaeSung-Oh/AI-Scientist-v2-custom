@@ -227,6 +227,7 @@ def get_available_gpus(gpu_ids=None):
 
 
 def find_pdf_path_for_review(idea_dir):
+    pdf_path = None
     pdf_files = [f for f in os.listdir(idea_dir) if f.endswith(".pdf")]
     reflection_pdfs = [f for f in pdf_files if "reflection" in f]
     if reflection_pdfs:
@@ -382,7 +383,11 @@ if __name__ == "__main__":
             dirs_exist_ok=True,
         )
 
-    aggregate_plots(base_folder=idea_dir, model=args.model_agg_plots)
+    try:
+        aggregate_plots(base_folder=idea_dir, model=args.model_agg_plots)
+    except Exception:
+        print("Plot aggregation failed. Continuing with saved experiment summaries.")
+        print(traceback.format_exc())
     backup_experiment(idea_dir, reason="after_plot_aggregation")
 
     copied_experiment_results_dir = osp.join(idea_dir, "experiment_results")
@@ -429,7 +434,7 @@ if __name__ == "__main__":
     if not args.skip_review and not args.skip_writeup:
         # Perform paper review if the paper exists
         pdf_path = find_pdf_path_for_review(idea_dir)
-        if os.path.exists(pdf_path):
+        if pdf_path and os.path.exists(pdf_path):
             print("Paper found at: ", pdf_path)
             paper_content = load_paper(pdf_path)
             client, client_model = create_client(args.model_review)
@@ -443,6 +448,8 @@ if __name__ == "__main__":
                 json.dump(review_img_cap_ref, f, indent=4)
             print("Paper review completed.")
             backup_experiment(idea_dir, reason="after_review")
+        else:
+            print("No paper PDF found for review. Skipping review.")
 
     print("Start cleaning up processes")
     # Kill all mp and torch processes associated with this experiment
