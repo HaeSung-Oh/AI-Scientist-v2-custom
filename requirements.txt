@@ -5,6 +5,7 @@ openai
 # Viz
 matplotlib
 pypdf
+PyMuPDF
 pymupdf4llm
 seaborn
 # Common Requirements
@@ -35,3 +36,9 @@ jsonschema
 omegaconf
 botocore
 boto3
+ipython
+psutil
+PyYAML
+requests
+# PyTorch is required by the experiment launcher, but install the CPU/CUDA build
+# that matches your system separately from https://pytorch.org/.
