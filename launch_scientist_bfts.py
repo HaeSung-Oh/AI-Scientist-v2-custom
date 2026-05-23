@@ -10,6 +10,10 @@ import yaml
 import traceback
 from datetime import datetime
 from ai_scientist.llm import create_client
+from ai_scientist.datasets.polyp import (
+    code_uses_synthetic_data,
+    prepare_real_polyp_data,
+)
 
 from ai_scientist.treesearch.perform_experiments_bfts_with_agentmanager import (
     perform_experiments_bfts,
@@ -56,29 +60,6 @@ BACKUP_FILE_NAMES = {
 }
 BACKUP_PREFIXES = ("best_solution_",)
 BACKUP_SUFFIXES = (".pdf",)
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-IMAGE_DIR_NAMES = {"image", "images", "img", "imgs", "original", "originals"}
-MASK_DIR_NAMES = {
-    "mask",
-    "masks",
-    "label",
-    "labels",
-    "annotation",
-    "annotations",
-    "ground truth",
-    "ground_truth",
-    "gt",
-}
-POLYP_DATASETS = {
-    "Kvasir-SEG": {
-        "aliases": ("kvasir", "kvasir-seg", "kvasir_seg"),
-        "hf_repo": "Angelou0516/kvasir-seg",
-    },
-    "CVC-ClinicDB": {
-        "aliases": ("clinic", "clinicdb", "cvc-clinicdb", "cvcclinicdb"),
-        "hf_repo": "Angelou0516/CVC-ClinicDB",
-    },
-}
 
 
 def print_time():
@@ -133,200 +114,6 @@ def backup_experiment(idea_dir, reason="manual"):
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"Backed up {copied} files to {backup_dir} ({reason})")
-
-
-def count_images(path):
-    if not path or not osp.isdir(path):
-        return 0
-    return sum(
-        1
-        for filename in os.listdir(path)
-        if osp.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
-    )
-
-
-def walk_limited(search_root, max_depth=6):
-    search_root = osp.abspath(search_root)
-    base_depth = search_root.rstrip(os.sep).count(os.sep)
-    for root, dirs, files in os.walk(search_root):
-        depth = root.rstrip(os.sep).count(os.sep) - base_depth
-        if depth >= max_depth:
-            dirs[:] = []
-        yield root, dirs, files
-
-
-def find_image_mask_pair(dataset_root):
-    candidates = []
-    for root, dirs, _ in walk_limited(dataset_root, max_depth=5):
-        dir_map = {d.lower(): d for d in dirs}
-        for image_name in IMAGE_DIR_NAMES:
-            if image_name not in dir_map:
-                continue
-            for mask_name in MASK_DIR_NAMES:
-                if mask_name not in dir_map:
-                    continue
-                image_dir = osp.join(root, dir_map[image_name])
-                mask_dir = osp.join(root, dir_map[mask_name])
-                image_count = count_images(image_dir)
-                mask_count = count_images(mask_dir)
-                if image_count and mask_count:
-                    candidates.append((min(image_count, mask_count), image_dir, mask_dir))
-
-    if not candidates:
-        return None
-    candidates.sort(reverse=True, key=lambda item: item[0])
-    return candidates[0][1], candidates[0][2]
-
-
-def find_dataset_root(search_root, dataset_name, aliases, max_depth=6):
-    if not search_root or not osp.isdir(search_root):
-        return None
-
-    matches = []
-    for root, dirs, _ in walk_limited(search_root, max_depth=max_depth):
-        base = osp.basename(root).lower()
-        if any(alias in base for alias in aliases):
-            pair = find_image_mask_pair(root)
-            if pair:
-                matches.append((count_images(pair[0]) + count_images(pair[1]), root))
-        for dirname in dirs:
-            dirname_lower = dirname.lower()
-            if any(alias in dirname_lower for alias in aliases):
-                candidate = osp.join(root, dirname)
-                pair = find_image_mask_pair(candidate)
-                if pair:
-                    matches.append((count_images(pair[0]) + count_images(pair[1]), candidate))
-
-    if not matches:
-        direct_pair = find_image_mask_pair(search_root)
-        if direct_pair and len(POLYP_DATASETS) == 1:
-            return search_root
-        return None
-    matches.sort(reverse=True, key=lambda item: item[0])
-    print(f"Found {dataset_name} candidate at {matches[0][1]}")
-    return matches[0][1]
-
-
-def copy_dataset_pair(src_root, dst_root, dataset_name):
-    pair = find_image_mask_pair(src_root)
-    if pair is None:
-        raise RuntimeError(
-            f"Could not find image/mask folders for {dataset_name} under {src_root}."
-        )
-    image_dir, mask_dir = pair
-    dataset_dst = osp.join(dst_root, dataset_name)
-    if osp.exists(dataset_dst):
-        shutil.rmtree(dataset_dst)
-    os.makedirs(dataset_dst, exist_ok=True)
-    shutil.copytree(image_dir, osp.join(dataset_dst, "images"))
-    shutil.copytree(mask_dir, osp.join(dataset_dst, "masks"))
-    print(
-        f"Prepared {dataset_name}: "
-        f"{count_images(osp.join(dataset_dst, 'images'))} images, "
-        f"{count_images(osp.join(dataset_dst, 'masks'))} masks"
-    )
-
-
-def download_hf_dataset(repo_id, download_root):
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as e:
-        raise RuntimeError(
-            "Downloading datasets requires huggingface_hub. Install it with "
-            "`conda run -n ai_scientist python -m pip install huggingface_hub`."
-        ) from e
-
-    return snapshot_download(
-        repo_id=repo_id,
-        repo_type="dataset",
-        local_dir=osp.join(download_root, repo_id.replace("/", "__")),
-        local_dir_use_symlinks=False,
-    )
-
-
-def default_dataset_search_roots():
-    roots = []
-    candidates = [
-        os.environ.get("POLYP_DATASET_ROOT"),
-        os.environ.get("AI_SCIENTIST_DATA_ROOT"),
-        osp.expanduser("~/Polyp"),
-        osp.expanduser("~/datasets"),
-        osp.expanduser("~/data"),
-        osp.expanduser("~/BP"),
-        osp.abspath(osp.join(os.getcwd(), "..")),
-        osp.abspath(os.getcwd()),
-    ]
-
-    for candidate in candidates:
-        if candidate and osp.isdir(candidate) and candidate not in roots:
-            roots.append(candidate)
-    return roots
-
-
-def prepare_real_polyp_data(args, idea_dir):
-    data_dir = osp.join(idea_dir, "data")
-    os.makedirs(data_dir, exist_ok=True)
-
-    source_roots = []
-    if args.dataset_root:
-        source_roots.append(osp.abspath(args.dataset_root))
-
-    if not args.no_auto_discover_data:
-        discovered_roots = default_dataset_search_roots()
-        print("Searching for local polyp datasets in:")
-        for root in discovered_roots:
-            print(f"  - {root}")
-        source_roots.extend(root for root in discovered_roots if root not in source_roots)
-
-    if not source_roots:
-        source_roots.append(data_dir)
-
-    missing = []
-    for dataset_name, spec in POLYP_DATASETS.items():
-        prepared_path = osp.join(data_dir, dataset_name)
-        if find_image_mask_pair(prepared_path):
-            continue
-
-        source_root = None
-        for root in source_roots:
-            source_root = find_dataset_root(root, dataset_name, spec["aliases"])
-            if source_root:
-                break
-        if source_root:
-            copy_dataset_pair(source_root, data_dir, dataset_name)
-        else:
-            missing.append(dataset_name)
-
-    should_download = args.download_polyp_data or not args.no_auto_download_polyp_data
-    if missing and should_download:
-        download_root = osp.join(idea_dir, "_downloaded_datasets")
-        os.makedirs(download_root, exist_ok=True)
-        still_missing = []
-        for dataset_name in missing:
-            spec = POLYP_DATASETS[dataset_name]
-            print(f"Downloading {dataset_name} from Hugging Face: {spec['hf_repo']}")
-            downloaded_root = download_hf_dataset(spec["hf_repo"], download_root)
-            source_root = find_dataset_root(
-                downloaded_root, dataset_name, spec["aliases"], max_depth=8
-            )
-            if source_root:
-                copy_dataset_pair(source_root, data_dir, dataset_name)
-            else:
-                still_missing.append(dataset_name)
-        missing = still_missing
-
-    if missing and not args.allow_missing_real_data:
-        raise RuntimeError(
-            "Missing required real polyp datasets: "
-            + ", ".join(missing)
-            + ". Provide them with `--dataset-root /path/to/data` or use "
-            "`--download-polyp-data`. By default the launcher searches local "
-            "dataset folders and attempts public downloads; use "
-            "`--no-auto-download-polyp-data` to disable downloads. Synthetic "
-            "data is not accepted for final validation."
-        )
-
-    return data_dir
 
 
 def parse_arguments():
@@ -393,6 +180,21 @@ def parse_arguments():
         "--allow-missing-real-data",
         action="store_true",
         help="Allow BFTS to start even if real polyp datasets are missing.",
+    )
+    parser.add_argument(
+        "--copy-datasets",
+        action="store_true",
+        help="Copy dataset files into the experiment instead of symlinking them.",
+    )
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Prepare/check data and runtime dependencies, then exit before BFTS.",
+    )
+    parser.add_argument(
+        "--allow-synthetic-validation",
+        action="store_true",
+        help="Do not fail the run if BFTS appears to validate only on synthetic data.",
     )
     parser.add_argument(
         "--writeup-retries",
@@ -529,6 +331,76 @@ def tee_stdout_stderr_to_file(log_file_path):
     return log
 
 
+def close_console_log(log):
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    log.close()
+
+
+def run_preflight_checks(data_statuses):
+    print("Running preflight checks")
+    required_imports = [
+        "numpy",
+        "scipy",
+        "sklearn",
+        "torch",
+        "torchvision",
+        "psutil",
+        "yaml",
+        "openai",
+    ]
+    for module_name in required_imports:
+        __import__(module_name)
+        print(f"  import ok: {module_name}")
+
+    for dataset_name, status in data_statuses.items():
+        if not status.ready:
+            raise RuntimeError(
+                f"{dataset_name} is not ready: "
+                f"{status.image_count} images, {status.mask_count} masks"
+            )
+        print(
+            f"  data ok: {dataset_name} "
+            f"({status.image_count} images, {status.mask_count} masks)"
+        )
+
+
+def assert_no_synthetic_only_validation(idea_dir):
+    suspicious_nodes = []
+    journal_paths = []
+    logs_dir = osp.join(idea_dir, "logs")
+    if not osp.isdir(logs_dir):
+        return
+
+    for root, _, files in os.walk(logs_dir):
+        if "journal.json" in files:
+            journal_paths.append(osp.join(root, "journal.json"))
+
+    for journal_path in journal_paths:
+        try:
+            with open(journal_path, "r") as f:
+                journal = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        for node in journal.get("nodes", []):
+            if node.get("is_buggy"):
+                continue
+            datasets = node.get("datasets_successfully_tested") or []
+            code = node.get("code") or ""
+            if datasets and any("synthetic" not in d.lower() for d in datasets):
+                continue
+            if code_uses_synthetic_data(code):
+                suspicious_nodes.append(node.get("id", "unknown"))
+
+    if suspicious_nodes:
+        raise RuntimeError(
+            "BFTS produced non-buggy nodes that appear to validate only on "
+            "synthetic data: "
+            + ", ".join(suspicious_nodes)
+            + ". Re-run with --allow-synthetic-validation only for smoke tests."
+        )
+
+
 if __name__ == "__main__":
     args = parse_arguments()
     os.environ["AI_SCIENTIST_ROOT"] = os.path.dirname(os.path.abspath(__file__))
@@ -615,18 +487,36 @@ if __name__ == "__main__":
         idea_dir,
         idea_path_json,
     )
-    data_dir = prepare_real_polyp_data(args, idea_dir)
+    data_dir, data_statuses = prepare_real_polyp_data(
+        idea_dir=idea_dir,
+        dataset_root=args.dataset_root,
+        auto_discover=not args.no_auto_discover_data,
+        auto_download=not args.no_auto_download_polyp_data,
+        force_download=args.download_polyp_data,
+        allow_missing=args.allow_missing_real_data,
+        use_symlinks=not args.copy_datasets,
+    )
     code_model = args.code_model or CODE_MODEL_PRESETS[args.code]
     with open(idea_config_path, "r") as f:
         run_config = yaml.load(f, Loader=yaml.FullLoader)
     run_config["agent"]["code"]["model"] = code_model
     run_config["data_dir"] = data_dir
+    run_config["copy_data"] = args.copy_datasets
     with open(idea_config_path, "w") as f:
         yaml.dump(run_config, f)
     print(f"Using code model: {code_model}")
     backup_experiment(idea_dir, reason="initialized")
 
+    run_preflight_checks(data_statuses)
+    if args.preflight_only:
+        print("Preflight checks completed. Exiting before BFTS.")
+        backup_experiment(idea_dir, reason="preflight_only")
+        close_console_log(console_log)
+        sys.exit(0)
+
     perform_experiments_bfts(idea_config_path)
+    if not args.allow_synthetic_validation:
+        assert_no_synthetic_only_validation(idea_dir)
     backup_experiment(idea_dir, reason="after_bfts")
     experiment_results_dir = osp.join(idea_dir, "logs/0-run/experiment_results")
     if os.path.exists(experiment_results_dir):
@@ -753,5 +643,5 @@ if __name__ == "__main__":
 
     # exit the program
     backup_experiment(idea_dir, reason="final")
-    console_log.close()
+    close_console_log(console_log)
     sys.exit(0)
