@@ -762,3 +762,82 @@ agent:
 초기 코드 생성만 Codex식으로 만드는 것이 아니라,
 BFTS 본실행 실패 이후의 debug node도 Codex식으로 repair한다.
 ```
+
+## 8차 구현 범위
+
+8차는 reviewer 병렬화와 task-adaptive scaffold registry를 추가하는 단계다.
+
+### reviewer 병렬화
+
+기존 reviewer 흐름:
+
+```text
+PackageReviewer
+  -> DataReviewer
+  -> TorchShapeReviewer
+  -> MetricReviewer
+```
+
+8차 흐름:
+
+```text
+PackageReviewer ┐
+DataReviewer    ├ 병렬 실행
+TorchReviewer   ┤
+MetricReviewer  ┘
+  -> 원래 reviewer 순서대로 feedback 병합
+  -> CodeRepairAgent
+```
+
+config:
+
+```yaml
+agent:
+  code:
+    sequential_multi:
+      parallel_reviewers: true
+```
+
+### task-adaptive scaffold registry
+
+특정 연구용 scaffold를 전역으로 강제하지 않는다. 대신 task description과 observed tool context를 보고 scaffold candidate만 선택한다.
+
+추가 구조:
+
+```text
+ai_scientist/scaffolds/
+  __init__.py
+  registry.py
+  guidance.py
+```
+
+지원 guidance:
+
+```text
+generic_experiment
+generic_timeseries
+generic_tabular
+generic_image_classification
+generic_segmentation
+polyp_segmentation
+```
+
+선택 원칙:
+
+```text
+1. time-series 신호가 있으면 generic_timeseries
+2. polyp + segmentation 신호가 같이 있으면 polyp_segmentation
+3. segmentation 신호만 있으면 generic_segmentation
+4. tabular/image classification 신호가 있으면 해당 generic scaffold
+5. 아무것도 확실하지 않으면 generic_experiment
+```
+
+Writer/Reviewer/Repairer에게 들어가는 주의 문구:
+
+```text
+Use this scaffold only if it matches the task and observed local context.
+If it does not match, explicitly fall back to generic experiment code.
+Do not force a domain-specific scaffold onto unrelated tasks.
+```
+
+이렇게 하면 polyp 연구에는 polyp scaffold 후보가 들어갈 수 있지만, 시계열 연구에는 timeseries scaffold 후보가 들어가고, 둘 다 애매하면 generic으로 fallback한다.
