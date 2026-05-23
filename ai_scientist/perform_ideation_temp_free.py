@@ -177,6 +177,9 @@ idea_reflection_prompt = """Round {current_round}/{num_reflections}.
 
 /think
 
+Workshop description and constraints:
+{workshop_description}
+
 In your thoughts, first carefully consider the quality, novelty, and feasibility of the proposal you just created.
 Include any other factors that you think are important in evaluating the proposal.
 Ensure the proposal is clear and concise, and the JSON is in the correct format.
@@ -554,6 +557,7 @@ def generate_temp_free_idea(
                     prompt_text = idea_reflection_prompt.format(
                         current_round=cycle_idx,
                         num_reflections=num_reflections,
+                        workshop_description=workshop_description,
                         last_tool_results=last_tool_results or "No new results.",
                         shared_transcript=shared_transcript_text,
                         evidence_bank=evidence_bank_text,
