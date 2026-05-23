@@ -316,6 +316,8 @@ class MinimalAgent:
             "  - Do NOT use synthetic, procedurally generated, or simulated data as the main evidence for validating the research claim.",
             "  - Download and use real public datasets for the actual validation whenever available.",
             "  - For polyp segmentation experiments, prioritize real public datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300.",
+            "  - For this launcher, real polyp datasets are prepared in the runtime input directory as `input/Kvasir-SEG/images`, `input/Kvasir-SEG/masks`, `input/CVC-ClinicDB/images`, and `input/CVC-ClinicDB/masks` when available.",
+            "  - For polyp segmentation code, first verify these input directories exist and contain image files; if they are missing, raise a clear RuntimeError instead of creating synthetic validation data.",
             "  - Report metrics on real data. For cross-domain tasks, use source-to-target or leave-one-domain-out protocols when possible.",
             "  - Any implementation that only validates the core claim on synthetic, procedurally generated, or simulated data is incomplete and should be revised.",
         ]

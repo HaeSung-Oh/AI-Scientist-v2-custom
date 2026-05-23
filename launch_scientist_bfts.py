@@ -56,6 +56,29 @@ BACKUP_FILE_NAMES = {
 }
 BACKUP_PREFIXES = ("best_solution_",)
 BACKUP_SUFFIXES = (".pdf",)
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+IMAGE_DIR_NAMES = {"image", "images", "img", "imgs"}
+MASK_DIR_NAMES = {
+    "mask",
+    "masks",
+    "label",
+    "labels",
+    "annotation",
+    "annotations",
+    "ground truth",
+    "ground_truth",
+    "gt",
+}
+POLYP_DATASETS = {
+    "Kvasir-SEG": {
+        "aliases": ("kvasir", "kvasir-seg", "kvasir_seg"),
+        "hf_repo": "Angelou0516/kvasir-seg",
+    },
+    "CVC-ClinicDB": {
+        "aliases": ("cvc", "clinic", "clinicdb", "cvc-clinicdb", "cvcclinicdb"),
+        "hf_repo": "Angelou0516/CVC-ClinicDB",
+    },
+}
 
 
 def print_time():
@@ -112,6 +135,148 @@ def backup_experiment(idea_dir, reason="manual"):
     print(f"Backed up {copied} files to {backup_dir} ({reason})")
 
 
+def count_images(path):
+    if not path or not osp.isdir(path):
+        return 0
+    return sum(
+        1
+        for filename in os.listdir(path)
+        if osp.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
+    )
+
+
+def find_image_mask_pair(dataset_root):
+    candidates = []
+    for root, dirs, _ in os.walk(dataset_root):
+        dir_map = {d.lower(): d for d in dirs}
+        for image_name in IMAGE_DIR_NAMES:
+            if image_name not in dir_map:
+                continue
+            for mask_name in MASK_DIR_NAMES:
+                if mask_name not in dir_map:
+                    continue
+                image_dir = osp.join(root, dir_map[image_name])
+                mask_dir = osp.join(root, dir_map[mask_name])
+                image_count = count_images(image_dir)
+                mask_count = count_images(mask_dir)
+                if image_count and mask_count:
+                    candidates.append((min(image_count, mask_count), image_dir, mask_dir))
+
+    if not candidates:
+        return None
+    candidates.sort(reverse=True, key=lambda item: item[0])
+    return candidates[0][1], candidates[0][2]
+
+
+def find_dataset_root(search_root, dataset_name, aliases):
+    matches = []
+    for root, dirs, _ in os.walk(search_root):
+        base = osp.basename(root).lower()
+        if any(alias in base for alias in aliases):
+            pair = find_image_mask_pair(root)
+            if pair:
+                matches.append((count_images(pair[0]) + count_images(pair[1]), root))
+        for dirname in dirs:
+            dirname_lower = dirname.lower()
+            if any(alias in dirname_lower for alias in aliases):
+                candidate = osp.join(root, dirname)
+                pair = find_image_mask_pair(candidate)
+                if pair:
+                    matches.append((count_images(pair[0]) + count_images(pair[1]), candidate))
+
+    if not matches:
+        direct_pair = find_image_mask_pair(search_root)
+        if direct_pair and len(POLYP_DATASETS) == 1:
+            return search_root
+        return None
+    matches.sort(reverse=True, key=lambda item: item[0])
+    print(f"Found {dataset_name} candidate at {matches[0][1]}")
+    return matches[0][1]
+
+
+def copy_dataset_pair(src_root, dst_root, dataset_name):
+    pair = find_image_mask_pair(src_root)
+    if pair is None:
+        raise RuntimeError(
+            f"Could not find image/mask folders for {dataset_name} under {src_root}."
+        )
+    image_dir, mask_dir = pair
+    dataset_dst = osp.join(dst_root, dataset_name)
+    if osp.exists(dataset_dst):
+        shutil.rmtree(dataset_dst)
+    os.makedirs(dataset_dst, exist_ok=True)
+    shutil.copytree(image_dir, osp.join(dataset_dst, "images"))
+    shutil.copytree(mask_dir, osp.join(dataset_dst, "masks"))
+    print(
+        f"Prepared {dataset_name}: "
+        f"{count_images(osp.join(dataset_dst, 'images'))} images, "
+        f"{count_images(osp.join(dataset_dst, 'masks'))} masks"
+    )
+
+
+def download_hf_dataset(repo_id, download_root):
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as e:
+        raise RuntimeError(
+            "Downloading datasets requires huggingface_hub. Install it with "
+            "`conda run -n ai_scientist python -m pip install huggingface_hub`."
+        ) from e
+
+    return snapshot_download(
+        repo_id=repo_id,
+        repo_type="dataset",
+        local_dir=osp.join(download_root, repo_id.replace("/", "__")),
+        local_dir_use_symlinks=False,
+    )
+
+
+def prepare_real_polyp_data(args, idea_dir):
+    data_dir = osp.join(idea_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+
+    source_roots = []
+    if args.dataset_root:
+        source_roots.append(osp.abspath(args.dataset_root))
+
+    if args.download_polyp_data:
+        download_root = osp.join(idea_dir, "_downloaded_datasets")
+        os.makedirs(download_root, exist_ok=True)
+        for dataset_name, spec in POLYP_DATASETS.items():
+            print(f"Downloading {dataset_name} from Hugging Face: {spec['hf_repo']}")
+            source_roots.append(download_hf_dataset(spec["hf_repo"], download_root))
+
+    if not source_roots:
+        source_roots.append(data_dir)
+
+    missing = []
+    for dataset_name, spec in POLYP_DATASETS.items():
+        prepared_path = osp.join(data_dir, dataset_name)
+        if find_image_mask_pair(prepared_path):
+            continue
+
+        source_root = None
+        for root in source_roots:
+            source_root = find_dataset_root(root, dataset_name, spec["aliases"])
+            if source_root:
+                break
+        if source_root:
+            copy_dataset_pair(source_root, data_dir, dataset_name)
+        else:
+            missing.append(dataset_name)
+
+    if missing and not args.allow_missing_real_data:
+        raise RuntimeError(
+            "Missing required real polyp datasets: "
+            + ", ".join(missing)
+            + ". Provide them with `--dataset-root /path/to/data` or use "
+            "`--download-polyp-data`. Synthetic data is not accepted for final "
+            "validation."
+        )
+
+    return data_dir
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run AI scientist experiments")
     parser.add_argument(
@@ -142,6 +307,26 @@ def parse_arguments():
         "--add_dataset_ref",
         action="store_true",
         help="If set, add a HF dataset reference to the idea",
+    )
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        default=None,
+        help=(
+            "Local root containing real polyp datasets. The launcher will look "
+            "for Kvasir-SEG and CVC-ClinicDB image/mask folders and copy them "
+            "into the experiment data directory."
+        ),
+    )
+    parser.add_argument(
+        "--download-polyp-data",
+        action="store_true",
+        help="Download Kvasir-SEG and CVC-ClinicDB from public Hugging Face dataset repos.",
+    )
+    parser.add_argument(
+        "--allow-missing-real-data",
+        action="store_true",
+        help="Allow BFTS to start even if real polyp datasets are missing.",
     )
     parser.add_argument(
         "--writeup-retries",
@@ -364,10 +549,12 @@ if __name__ == "__main__":
         idea_dir,
         idea_path_json,
     )
+    data_dir = prepare_real_polyp_data(args, idea_dir)
     code_model = args.code_model or CODE_MODEL_PRESETS[args.code]
     with open(idea_config_path, "r") as f:
         run_config = yaml.load(f, Loader=yaml.FullLoader)
     run_config["agent"]["code"]["model"] = code_model
+    run_config["data_dir"] = data_dir
     with open(idea_config_path, "w") as f:
         yaml.dump(run_config, f)
     print(f"Using code model: {code_model}")

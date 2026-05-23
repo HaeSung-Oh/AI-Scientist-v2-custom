@@ -29,6 +29,7 @@ dataclasses-json
 funcy
 black
 genson
+huggingface_hub
 shutup
 python-igraph
 coolname
