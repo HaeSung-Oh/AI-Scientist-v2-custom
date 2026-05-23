@@ -57,7 +57,7 @@ BACKUP_FILE_NAMES = {
 BACKUP_PREFIXES = ("best_solution_",)
 BACKUP_SUFFIXES = (".pdf",)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-IMAGE_DIR_NAMES = {"image", "images", "img", "imgs"}
+IMAGE_DIR_NAMES = {"image", "images", "img", "imgs", "original", "originals"}
 MASK_DIR_NAMES = {
     "mask",
     "masks",
@@ -75,7 +75,7 @@ POLYP_DATASETS = {
         "hf_repo": "Angelou0516/kvasir-seg",
     },
     "CVC-ClinicDB": {
-        "aliases": ("cvc", "clinic", "clinicdb", "cvc-clinicdb", "cvcclinicdb"),
+        "aliases": ("clinic", "clinicdb", "cvc-clinicdb", "cvcclinicdb"),
         "hf_repo": "Angelou0516/CVC-ClinicDB",
     },
 }
@@ -145,9 +145,19 @@ def count_images(path):
     )
 
 
+def walk_limited(search_root, max_depth=6):
+    search_root = osp.abspath(search_root)
+    base_depth = search_root.rstrip(os.sep).count(os.sep)
+    for root, dirs, files in os.walk(search_root):
+        depth = root.rstrip(os.sep).count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirs[:] = []
+        yield root, dirs, files
+
+
 def find_image_mask_pair(dataset_root):
     candidates = []
-    for root, dirs, _ in os.walk(dataset_root):
+    for root, dirs, _ in walk_limited(dataset_root, max_depth=5):
         dir_map = {d.lower(): d for d in dirs}
         for image_name in IMAGE_DIR_NAMES:
             if image_name not in dir_map:
@@ -168,9 +178,12 @@ def find_image_mask_pair(dataset_root):
     return candidates[0][1], candidates[0][2]
 
 
-def find_dataset_root(search_root, dataset_name, aliases):
+def find_dataset_root(search_root, dataset_name, aliases, max_depth=6):
+    if not search_root or not osp.isdir(search_root):
+        return None
+
     matches = []
-    for root, dirs, _ in os.walk(search_root):
+    for root, dirs, _ in walk_limited(search_root, max_depth=max_depth):
         base = osp.basename(root).lower()
         if any(alias in base for alias in aliases):
             pair = find_image_mask_pair(root)
@@ -231,6 +244,25 @@ def download_hf_dataset(repo_id, download_root):
     )
 
 
+def default_dataset_search_roots():
+    roots = []
+    candidates = [
+        os.environ.get("POLYP_DATASET_ROOT"),
+        os.environ.get("AI_SCIENTIST_DATA_ROOT"),
+        osp.expanduser("~/Polyp"),
+        osp.expanduser("~/datasets"),
+        osp.expanduser("~/data"),
+        osp.expanduser("~/BP"),
+        osp.abspath(osp.join(os.getcwd(), "..")),
+        osp.abspath(os.getcwd()),
+    ]
+
+    for candidate in candidates:
+        if candidate and osp.isdir(candidate) and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
 def prepare_real_polyp_data(args, idea_dir):
     data_dir = osp.join(idea_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -239,12 +271,12 @@ def prepare_real_polyp_data(args, idea_dir):
     if args.dataset_root:
         source_roots.append(osp.abspath(args.dataset_root))
 
-    if args.download_polyp_data:
-        download_root = osp.join(idea_dir, "_downloaded_datasets")
-        os.makedirs(download_root, exist_ok=True)
-        for dataset_name, spec in POLYP_DATASETS.items():
-            print(f"Downloading {dataset_name} from Hugging Face: {spec['hf_repo']}")
-            source_roots.append(download_hf_dataset(spec["hf_repo"], download_root))
+    if not args.no_auto_discover_data:
+        discovered_roots = default_dataset_search_roots()
+        print("Searching for local polyp datasets in:")
+        for root in discovered_roots:
+            print(f"  - {root}")
+        source_roots.extend(root for root in discovered_roots if root not in source_roots)
 
     if not source_roots:
         source_roots.append(data_dir)
@@ -265,13 +297,33 @@ def prepare_real_polyp_data(args, idea_dir):
         else:
             missing.append(dataset_name)
 
+    should_download = args.download_polyp_data or not args.no_auto_download_polyp_data
+    if missing and should_download:
+        download_root = osp.join(idea_dir, "_downloaded_datasets")
+        os.makedirs(download_root, exist_ok=True)
+        still_missing = []
+        for dataset_name in missing:
+            spec = POLYP_DATASETS[dataset_name]
+            print(f"Downloading {dataset_name} from Hugging Face: {spec['hf_repo']}")
+            downloaded_root = download_hf_dataset(spec["hf_repo"], download_root)
+            source_root = find_dataset_root(
+                downloaded_root, dataset_name, spec["aliases"], max_depth=8
+            )
+            if source_root:
+                copy_dataset_pair(source_root, data_dir, dataset_name)
+            else:
+                still_missing.append(dataset_name)
+        missing = still_missing
+
     if missing and not args.allow_missing_real_data:
         raise RuntimeError(
             "Missing required real polyp datasets: "
             + ", ".join(missing)
             + ". Provide them with `--dataset-root /path/to/data` or use "
-            "`--download-polyp-data`. Synthetic data is not accepted for final "
-            "validation."
+            "`--download-polyp-data`. By default the launcher searches local "
+            "dataset folders and attempts public downloads; use "
+            "`--no-auto-download-polyp-data` to disable downloads. Synthetic "
+            "data is not accepted for final validation."
         )
 
     return data_dir
@@ -321,7 +373,21 @@ def parse_arguments():
     parser.add_argument(
         "--download-polyp-data",
         action="store_true",
-        help="Download Kvasir-SEG and CVC-ClinicDB from public Hugging Face dataset repos.",
+        help=(
+            "Force download of missing Kvasir-SEG and CVC-ClinicDB data from "
+            "public Hugging Face dataset repos. Missing datasets are downloaded "
+            "by default unless --no-auto-download-polyp-data is set."
+        ),
+    )
+    parser.add_argument(
+        "--no-auto-discover-data",
+        action="store_true",
+        help="Do not automatically search local home/project folders for real polyp datasets.",
+    )
+    parser.add_argument(
+        "--no-auto-download-polyp-data",
+        action="store_true",
+        help="Do not automatically download missing public polyp datasets.",
     )
     parser.add_argument(
         "--allow-missing-real-data",
