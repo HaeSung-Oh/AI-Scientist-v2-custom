@@ -1,3 +1,6 @@
+# Backup created on 2026-05-24.
+# Snapshot of perform_ideation_temp_free.py before adding optional multi-agent ideation.
+
 import argparse
 import json
 import os.path as osp
@@ -136,9 +139,6 @@ Here are the proposals that you have already generated:
 
 Begin by deeply investigating an interestingly new high-level research proposal that differs from what you have previously proposed. Do not finalize immediately unless the literature search and validation reasoning are already strong enough. Prefer searching first.
 
-Shared transcript so far:
-{shared_transcript}
-
 {search_requirements}
 """
 
@@ -163,55 +163,9 @@ Results from your last action (if any):
 
 {last_tool_results}
 
-Shared transcript so far:
-{shared_transcript}
-
 Current literature-search requirement/status:
 {search_requirements}
 """
-
-agent_role_prompts = {
-    "IdeationAgent": """You are the IdeationAgent.
-Work as a single tool-using research ideation agent. Search, reflect, and finalize only when the evidence and validation plan are strong enough.""",
-    "ExplorerAgent": """You are the ExplorerAgent.
-Broaden the search space, identify surprising research directions, and choose literature searches that reveal what is current and underexplored. Prefer searching when evidence is thin. Do not finalize unless the shared transcript already contains enough search evidence and candidate comparison.""",
-    "SkepticAgent": """You are the SkepticAgent.
-Challenge novelty, feasibility, evaluation realism, and hidden overlap with prior work. Prefer searches that could disconfirm the current idea or reveal stronger related work. If the proposal looks incremental, choose a search or force a sharper distinction instead of finalizing.""",
-    "ExperimentAgent": """You are the ExperimentAgent.
-Focus on concrete datasets, metrics, baselines, ablations, resource limits, and falsification criteria. Prefer searches that clarify whether the validation plan is realistic on public data. Do not finalize vague ideas that cannot be tested cleanly.""",
-    "SynthesizerAgent": """You are the SynthesizerAgent.
-Integrate the search evidence and critiques into one clean proposal. Finalize only when the search requirements are satisfied, at least three candidate directions have been compared, and the validation plan is concrete. Otherwise choose the most useful next search.""",
-}
-
-
-def get_agent_schedule(agent_mode: str) -> List[str]:
-    if agent_mode == "single":
-        return ["IdeationAgent"]
-    return ["ExplorerAgent", "SkepticAgent", "ExperimentAgent", "SynthesizerAgent"]
-
-
-def build_agent_system_prompt(agent_name: str) -> str:
-    return f"{system_prompt}\n\n{agent_role_prompts[agent_name]}"
-
-
-def trim_for_transcript(text: Any, max_chars: int = 1800) -> str:
-    compact = " ".join(str(text).split())
-    return compact[:max_chars] + ("..." if len(compact) > max_chars else "")
-
-
-def format_shared_transcript(entries: List[str], max_chars: int = 7000) -> str:
-    if not entries:
-        return "No shared transcript yet."
-
-    selected = []
-    total_chars = 0
-    for entry in reversed(entries):
-        entry_len = len(entry)
-        if selected and total_chars + entry_len > max_chars:
-            break
-        selected.append(entry)
-        total_chars += entry_len
-    return "\n".join(reversed(selected))
 
 
 def parse_json_prefix(text: str) -> Dict:
@@ -323,7 +277,6 @@ def generate_temp_free_idea(
     num_reflections: int = 5,
     min_num_searches: int = 4,
     min_num_search_sources: int = 3,
-    agent_mode: str = "single",
     reload_ideas: bool = True,
 ) -> List[Dict]:
     idea_str_archive = []
@@ -345,18 +298,11 @@ def generate_temp_free_idea(
 
             last_tool_results = ""
             idea_finalized = False
-            agent_schedule = get_agent_schedule(agent_mode)
-            agent_histories = {agent_name: [] for agent_name in agent_schedule}
-            shared_transcript = []
+            msg_history = []
             successful_searches = 0
             successful_search_sources = set()
-            total_agent_rounds = num_reflections * len(agent_schedule)
 
-            for reflection_round in range(total_agent_rounds):
-                agent_name = agent_schedule[reflection_round % len(agent_schedule)]
-                cycle_idx = reflection_round // len(agent_schedule) + 1
-                agent_step_idx = reflection_round % len(agent_schedule) + 1
-                shared_transcript_text = format_shared_transcript(shared_transcript)
+            for reflection_round in range(num_reflections):
                 search_requirements = (
                     f"Before FinalizeIdea, perform at least {min_num_searches} "
                     f"successful literature searches from at least "
@@ -372,33 +318,23 @@ def generate_temp_free_idea(
                     prompt_text = idea_generation_prompt.format(
                         workshop_description=workshop_description,
                         prev_ideas_string=prev_ideas_string,
-                        shared_transcript=shared_transcript_text,
                         search_requirements=search_requirements,
                     )
                 else:
                     # Use the reflection prompt, including tool results if any
                     prompt_text = idea_reflection_prompt.format(
-                        current_round=cycle_idx,
+                        current_round=reflection_round + 1,
                         num_reflections=num_reflections,
                         last_tool_results=last_tool_results or "No new results.",
-                        shared_transcript=shared_transcript_text,
                         search_requirements=search_requirements,
                     )
 
-                if agent_mode == "multi":
-                    print(
-                        f"Agent: {agent_name} "
-                        f"(cycle {cycle_idx}/{num_reflections}, "
-                        f"step {agent_step_idx}/{len(agent_schedule)})"
-                    )
-                else:
-                    print(f"Agent: {agent_name}")
-                response_text, agent_histories[agent_name] = get_response_from_llm(
+                response_text, msg_history = get_response_from_llm(
                     prompt=prompt_text,
                     client=client,
                     model=model,
-                    system_message=build_agent_system_prompt(agent_name),
-                    msg_history=agent_histories[agent_name],
+                    system_message=system_prompt,
+                    msg_history=msg_history,
                 )
 
                 # Parse the LLM's response
@@ -422,11 +358,6 @@ def generate_temp_free_idea(
                             # Assuming the arguments match the parameters of the tool
                             result = tool.use_tool(**arguments_json)
                             last_tool_results = result
-                            shared_transcript.append(
-                                f"[{agent_name} round {reflection_round + 1}] "
-                                f"Action={action}; Arguments={trim_for_transcript(arguments_text, 500)}; "
-                                f"Result={trim_for_transcript(result)}"
-                            )
                             if action.startswith("Search"):
                                 if search_result_is_successful(result):
                                     successful_searches += 1
@@ -445,10 +376,6 @@ def generate_temp_free_idea(
                                     )
                         except Exception as e:
                             last_tool_results = f"Error using tool {action}: {str(e)}"
-                            shared_transcript.append(
-                                f"[{agent_name} round {reflection_round + 1}] "
-                                f"Action={action}; Error={trim_for_transcript(last_tool_results)}"
-                            )
                     elif action == "FinalizeIdea":
                         if (
                             successful_searches < min_num_searches
@@ -467,10 +394,6 @@ def generate_temp_free_idea(
                                 f"{min_num_search_sources} sources."
                             )
                             print(last_tool_results)
-                            shared_transcript.append(
-                                f"[{agent_name} round {reflection_round + 1}] "
-                                f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
-                            )
                             continue
 
                         # Parse arguments
@@ -486,19 +409,11 @@ def generate_temp_free_idea(
                                     + "; ".join(missing_requirements)
                                 )
                                 print(last_tool_results)
-                                shared_transcript.append(
-                                    f"[{agent_name} round {reflection_round + 1}] "
-                                    f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
-                                )
                                 continue
 
                             # Append the idea to the archive
                             idea_str_archive.append(json.dumps(idea))
                             print(f"Proposal finalized: {idea}")
-                            shared_transcript.append(
-                                f"[{agent_name} round {reflection_round + 1}] "
-                                f"Proposal finalized: {trim_for_transcript(idea)}"
-                            )
                             idea_finalized = True
                             break
                         except json.JSONDecodeError:
@@ -513,7 +428,7 @@ def generate_temp_free_idea(
                         f"Failed to parse LLM response. Response text:\n{response_text}"
                     )
                     traceback.print_exc()
-                    agent_histories[agent_name].append(
+                    msg_history.append(
                         {
                             "role": "user",
                             "content": (
@@ -527,10 +442,6 @@ def generate_temp_free_idea(
                         }
                     )
                     last_tool_results = "Previous response was unparsable; retry with the required ACTION/ARGUMENTS format."
-                    shared_transcript.append(
-                        f"[{agent_name} round {reflection_round + 1}] "
-                        f"Parse failure; Response={trim_for_transcript(response_text)}"
-                    )
                     continue
 
             if idea_finalized:
@@ -577,10 +488,7 @@ if __name__ == "__main__":
         "--num-reflections",
         type=int,
         default=5,
-        help=(
-            "Number of reflection rounds per proposal in single mode, or full "
-            "multi-agent cycles per proposal in multi mode."
-        ),
+        help="Number of reflection rounds per proposal.",
     )
     parser.add_argument(
         "--min-num-searches",
@@ -601,31 +509,15 @@ if __name__ == "__main__":
             "before finalizing each proposal."
         ),
     )
-    parser.add_argument(
-        "--agent-mode",
-        type=str,
-        default="single",
-        choices=["single", "multi"],
-        help=(
-            "Ideation agent mode. 'single' preserves the original one-agent "
-            "reflection loop; 'multi' rotates Explorer, Skeptic, Experiment, "
-            "and Synthesizer agents with a shared transcript."
-        ),
-    )
     args = parser.parse_args()
     if args.min_num_search_sources > args.min_num_searches:
         parser.error(
             "--min-num-search-sources cannot be greater than --min-num-searches."
         )
-    total_planned_agent_rounds = args.num_reflections * len(
-        get_agent_schedule(args.agent_mode)
-    )
-    if total_planned_agent_rounds <= args.min_num_searches:
+    if args.num_reflections <= args.min_num_searches:
         parser.error(
-            "The planned number of agent calls must be greater than "
-            "--min-num-searches so there is at least one round left to finalize "
-            "the proposal. In multi mode, planned calls are "
-            "--num-reflections multiplied by the number of agents."
+            "--num-reflections must be greater than --min-num-searches so there "
+            "is at least one round left to finalize the proposal."
         )
 
     # Create the LLM client
@@ -648,6 +540,5 @@ if __name__ == "__main__":
         num_reflections=args.num_reflections,
         min_num_searches=args.min_num_searches,
         min_num_search_sources=args.min_num_search_sources,
-        agent_mode=args.agent_mode,
     )
     print(f"{args.workshop_file} generated {len(ideas)} ideas.")
