@@ -682,3 +682,43 @@ agent:
 ```
 
 이 단계는 아직 "모든 agent가 마음대로 도구를 계속 호출"하는 완전한 Codex 구조는 아니다. 우선 code generation 앞단에서 안전한 로컬 context를 능동적으로 수집하고, 그 transcript를 이후 agent들에게 공유한다.
+
+## 6차 구현 범위
+
+6차는 validation 실패 후에도 tool loop를 다시 돌리는 단계다. 5차는 코드 작성 전에 한 번 context를 모으는 구조였고, 6차는 실패 로그를 보고 다시 관찰한다.
+
+흐름:
+
+```text
+generated code validation 실패
+  -> validation feedback을 ToolUsingCodeAgent에 전달
+  -> inspect_input / inspect_imports / rg / read_file 등으로 원인 재탐색
+  -> updated tool context를 RepairAgent에 전달
+  -> repaired code 생성
+  -> validation 재실행
+```
+
+예:
+
+```text
+Smoke test failed: FileNotFoundError input/Kvasir-SEG/images
+  -> inspect_input
+  -> 실제 input 구조 확인
+  -> RepairAgent가 경로 수정
+
+ImportError: albumentations
+  -> inspect_imports
+  -> albumentations missing 확인
+  -> RepairAgent가 import guard 또는 torchvision fallback으로 수정
+```
+
+config:
+
+```yaml
+agent:
+  code:
+    sequential_multi:
+      tool_repair_on_validation_failure: true
+```
+
+이 단계부터 repair는 단순히 에러 문자열만 보는 것이 아니라, 실패 후 새로 수집된 로컬 관찰 결과까지 보고 수정한다.

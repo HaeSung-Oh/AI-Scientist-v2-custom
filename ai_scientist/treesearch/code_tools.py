@@ -98,6 +98,7 @@ class ToolUsingCodeAgent:
             )
         )
         self.transcript: list[str] = []
+        self.extra_context = ""
 
     def _query(self, system_message: Any, user_message: Any = None) -> str:
         return query(
@@ -263,7 +264,7 @@ class ToolUsingCodeAgent:
         return f"Unknown tool: {action}"
 
     def _system_prompt(self, base_prompt: Any) -> dict:
-        return {
+        prompt = {
             "Role": "You are RepoToolAgent.",
             "Task": (
                 "Use the allowed read-only tools to gather only the local context "
@@ -282,16 +283,26 @@ class ToolUsingCodeAgent:
                 "Use paths relative to the repo root or workspace.",
             ],
         }
+        if self.extra_context:
+            prompt["Additional failure/debug context"] = self.extra_context
+        return prompt
 
     def _user_prompt(self) -> str:
         if not self.transcript:
-            return (
+            prompt = (
                 "Start by inspecting input data, dependency files, and relevant repo "
                 "files needed for generated experiment code."
             )
+            if self.extra_context:
+                prompt += (
+                    "\nA previous generated code attempt failed. Prioritize tools "
+                    "that can explain the failure context."
+                )
+            return prompt
         return "Tool transcript so far:\n" + "\n\n".join(self.transcript[-8:])
 
-    def run(self, base_prompt: Any) -> str:
+    def run(self, base_prompt: Any, extra_context: str | None = None) -> str:
+        self.extra_context = extra_context or ""
         for step in range(self.max_tool_steps):
             print(
                 "[cyan]ToolUsingCodeAgent: "

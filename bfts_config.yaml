@@ -68,6 +68,7 @@ agent:
       smoke_test_timeout: 60
       require_experiment_data: true
       use_tool_loop: true
+      tool_repair_on_validation_failure: true
       tool_loop:
         max_tool_steps: 8
         max_read_chars: 8000

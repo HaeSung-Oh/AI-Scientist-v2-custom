@@ -66,6 +66,9 @@ class SequentialCodeMultiAgent:
         )
         self.smoke_test_timeout = int(_cfg_get(self.multi_cfg, "smoke_test_timeout", 60))
         self.use_tool_loop = bool(_cfg_get(self.multi_cfg, "use_tool_loop", True))
+        self.tool_repair_on_validation_failure = bool(
+            _cfg_get(self.multi_cfg, "tool_repair_on_validation_failure", True)
+        )
         self.reviewers = list(
             _cfg_get(
                 self.multi_cfg,
@@ -209,11 +212,7 @@ class SequentialCodeMultiAgent:
         }
 
     def run(self, base_prompt: Any, retries: int = 3) -> tuple[str, str]:
-        tool_context = (
-            ToolUsingCodeAgent(self.cfg, workspace_dir=self.workspace_dir).run(base_prompt)
-            if self.use_tool_loop
-            else "Tool loop disabled."
-        )
+        tool_context = self._collect_tool_context(base_prompt)
         plan = self._query("planning", self._planner_prompt(base_prompt, tool_context))
         writer_response = self._query(
             "writing", self._writer_prompt(base_prompt, plan, tool_context)
@@ -273,6 +272,24 @@ class SequentialCodeMultiAgent:
             if repair_round >= self.max_repair_rounds:
                 break
 
+            if self.use_tool_loop and self.tool_repair_on_validation_failure:
+                retry_context = self._collect_tool_context(
+                    base_prompt,
+                    extra_context=(
+                        "Generated code validation failed. Use tools to investigate "
+                        "the likely local cause before repair.\n\n"
+                        + validation_feedback
+                    ),
+                )
+                tool_context = (
+                    f"{tool_context}\n\nUpdated tool context after validation "
+                    f"failure {repair_round + 1}:\n{retry_context}"
+                )
+                combined_plan = (
+                    f"{combined_plan}\n\nUpdated tool context after validation "
+                    f"failure {repair_round + 1}:\n{retry_context}"
+                ).strip()
+
             repair_response = self._query(
                 f"validation repair {repair_round + 1}/{self.max_repair_rounds}",
                 self._repair_prompt(
@@ -294,4 +311,14 @@ class SequentialCodeMultiAgent:
             + "\n\nSequential multi-agent validation failed before BFTS execution:\n"
             + validation_feedback,
             "raise RuntimeError('Sequential multi-agent code validation failed.')",
+        )
+
+    def _collect_tool_context(
+        self, base_prompt: Any, extra_context: str | None = None
+    ) -> str:
+        if not self.use_tool_loop:
+            return "Tool loop disabled."
+        return ToolUsingCodeAgent(self.cfg, workspace_dir=self.workspace_dir).run(
+            base_prompt,
+            extra_context=extra_context,
         )
