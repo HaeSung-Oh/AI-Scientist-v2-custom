@@ -69,6 +69,9 @@ class SequentialCodeMultiAgent:
         self.tool_repair_on_validation_failure = bool(
             _cfg_get(self.multi_cfg, "tool_repair_on_validation_failure", True)
         )
+        self.debug_with_tool_repair = bool(
+            _cfg_get(self.multi_cfg, "debug_with_tool_repair", True)
+        )
         self.reviewers = list(
             _cfg_get(
                 self.multi_cfg,
@@ -210,6 +213,110 @@ class SequentialCodeMultiAgent:
             "Validation feedback": validation_feedback or "No validation feedback yet.",
             "Output format": "Return a brief repair summary followed by one Python code block.",
         }
+
+    def repair_existing_code(
+        self,
+        base_prompt: Any,
+        previous_code: str,
+        failure_context: str,
+        retries: int = 3,
+    ) -> tuple[str, str]:
+        """Repair previously executed code using failure logs plus tool context."""
+        tool_context = self._collect_tool_context(
+            base_prompt,
+            extra_context=(
+                "Previous experiment code failed during BFTS execution. Use tools "
+                "to investigate local causes before proposing a targeted repair.\n\n"
+                + failure_context
+            ),
+        )
+        plan = (
+            "Repair previous experiment code after execution failure. Preserve the "
+            "working parts, make the smallest reliable changes, and keep the code "
+            "compatible with the smoke-test validation contract."
+        )
+        repair_response = self._query(
+            "execution failure repair",
+            self._repair_prompt(
+                base_prompt,
+                plan,
+                previous_code,
+                failure_context,
+                tool_context=tool_context,
+            ),
+        )
+        repair_plan, code = self._extract_or_repairable_code(repair_response)
+        combined_plan = (
+            f"Tool context:\n{tool_context}\n\n"
+            f"{plan}\n\nExecution repair notes:\n{repair_plan}"
+        ).strip()
+
+        validation_feedback = ""
+        for repair_round in range(self.max_repair_rounds + 1):
+            validation = validate_generated_code(
+                code,
+                run_py_compile=self.run_py_compile,
+                run_import_check=self.run_import_check,
+                reject_synthetic_only=self.reject_synthetic_only,
+                run_smoke_test=self.run_smoke_test,
+                require_experiment_data=self.require_experiment_data,
+                workspace_dir=self.workspace_dir,
+                smoke_test_timeout=self.smoke_test_timeout,
+            )
+            validation_feedback = validation.to_feedback()
+            print(f"[cyan]{validation_feedback}[/cyan]")
+            if validation.ok:
+                if validation.warnings:
+                    combined_plan = (
+                        f"{combined_plan}\n\nValidation warnings:\n"
+                        + "\n".join(validation.warnings)
+                    )
+                return combined_plan, code
+
+            if repair_round >= self.max_repair_rounds:
+                break
+
+            if self.use_tool_loop and self.tool_repair_on_validation_failure:
+                retry_context = self._collect_tool_context(
+                    base_prompt,
+                    extra_context=(
+                        "A repaired version of previously failed execution code did "
+                        "not pass validation. Use tools to investigate before the "
+                        "next repair.\n\n"
+                        + validation_feedback
+                    ),
+                )
+                tool_context = (
+                    f"{tool_context}\n\nUpdated tool context after debug validation "
+                    f"failure {repair_round + 1}:\n{retry_context}"
+                )
+                combined_plan = (
+                    f"{combined_plan}\n\nUpdated tool context after debug validation "
+                    f"failure {repair_round + 1}:\n{retry_context}"
+                ).strip()
+
+            repair_response = self._query(
+                f"execution repair validation fix {repair_round + 1}/{self.max_repair_rounds}",
+                self._repair_prompt(
+                    base_prompt,
+                    combined_plan,
+                    code,
+                    failure_context,
+                    validation_feedback,
+                    tool_context=tool_context,
+                ),
+            )
+            repair_plan, code = self._extract_or_repairable_code(repair_response)
+            combined_plan = (
+                f"{combined_plan}\n\nExecution validation repair notes:\n{repair_plan}"
+            ).strip()
+
+        return (
+            combined_plan
+            + "\n\nSequential multi-agent execution repair validation failed:\n"
+            + validation_feedback,
+            "raise RuntimeError('Sequential multi-agent execution repair validation failed.')",
+        )
 
     def run(self, base_prompt: Any, retries: int = 3) -> tuple[str, str]:
         tool_context = self._collect_tool_context(base_prompt)

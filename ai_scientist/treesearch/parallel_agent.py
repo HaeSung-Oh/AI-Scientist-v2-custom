@@ -572,7 +572,33 @@ class MinimalAgent:
         if self.cfg.agent.data_preview:
             prompt["Data Overview"] = self.data_preview
 
-        plan, code = self.plan_and_code_query(prompt)
+        multi_cfg = getattr(self.cfg.agent.code, "sequential_multi", {}) or {}
+        debug_with_tool_repair = (
+            multi_cfg.get("debug_with_tool_repair", True)
+            if hasattr(multi_cfg, "get")
+            else getattr(multi_cfg, "debug_with_tool_repair", True)
+        )
+        if (
+            getattr(self.cfg.agent.code, "mode", "single_shot") == "sequential_multi"
+            and debug_with_tool_repair
+        ):
+            failure_context = "\n\n".join(
+                [
+                    "Execution output:\n" + str(parent_node.term_out or ""),
+                    "Plot feedback:\n" + str(parent_node.vlm_feedback_summary or ""),
+                    "Execution time feedback:\n"
+                    + str(parent_node.exec_time_feedback or ""),
+                ]
+            )
+            plan, code = SequentialCodeMultiAgent(
+                self.cfg, workspace_dir=self.workspace_dir
+            ).repair_existing_code(
+                base_prompt=prompt,
+                previous_code=parent_node.code,
+                failure_context=failure_context,
+            )
+        else:
+            plan, code = self.plan_and_code_query(prompt)
         return Node(plan=plan, code=code, parent=parent_node)
 
     def _improve(self, parent_node: Node) -> Node:

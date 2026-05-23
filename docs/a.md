@@ -722,3 +722,43 @@ agent:
 ```
 
 이 단계부터 repair는 단순히 에러 문자열만 보는 것이 아니라, 실패 후 새로 수집된 로컬 관찰 결과까지 보고 수정한다.
+
+## 7차 구현 범위
+
+7차는 BFTS 본실행에서 실패한 코드의 debug 경로도 tool-aware repair로 바꾸는 단계다.
+
+기존 debug 흐름:
+
+```text
+실행 실패 node
+  -> _debug(parent_node)
+  -> 실패 로그를 프롬프트에 넣고 새 코드 생성
+```
+
+7차 흐름:
+
+```text
+실행 실패 node
+  -> _debug(parent_node)
+  -> parent_node.term_out / plot feedback / time feedback 수집
+  -> ToolUsingCodeAgent(extra_context=실패 로그) 실행
+  -> CodeRepairAgent가 이전 코드 + 실패 로그 + tool context 기반으로 repair
+  -> py_compile / import check / smoke test validation
+  -> validation 실패 시 tool 재탐색 후 repair 반복
+```
+
+config:
+
+```yaml
+agent:
+  code:
+    sequential_multi:
+      debug_with_tool_repair: true
+```
+
+이 단계의 의미:
+
+```text
+초기 코드 생성만 Codex식으로 만드는 것이 아니라,
+BFTS 본실행 실패 이후의 debug node도 Codex식으로 repair한다.
+```

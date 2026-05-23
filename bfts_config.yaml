@@ -69,6 +69,7 @@ agent:
       require_experiment_data: true
       use_tool_loop: true
       tool_repair_on_validation_failure: true
+      debug_with_tool_repair: true
       tool_loop:
         max_tool_steps: 8
         max_read_chars: 8000
