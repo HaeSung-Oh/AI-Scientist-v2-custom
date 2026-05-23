@@ -93,10 +93,12 @@ def get_batch_responses_from_llm(
     msg_history=None,
     temperature=0.7,
     n_responses=1,
+    max_tokens=None,
 ) -> tuple[list[str], list[list[dict[str, Any]]]]:
     msg = prompt
     if msg_history is None:
         msg_history = []
+    max_tokens = max_tokens or MAX_NUM_TOKENS
 
     if model.startswith("ollama/"):
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
@@ -107,7 +109,7 @@ def get_batch_responses_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=n_responses,
             stop=None,
         )
@@ -124,7 +126,7 @@ def get_batch_responses_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=n_responses,
             stop=None,
             seed=0,
@@ -142,7 +144,7 @@ def get_batch_responses_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=n_responses,
             stop=None,
         )
@@ -159,7 +161,7 @@ def get_batch_responses_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=n_responses,
             stop=None,
         )
@@ -176,7 +178,7 @@ def get_batch_responses_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=n_responses,
             stop=None,
         )
@@ -213,7 +215,8 @@ def get_batch_responses_from_llm(
 
 
 @track_token_usage
-def make_llm_call(client, model, temperature, system_message, prompt):
+def make_llm_call(client, model, temperature, system_message, prompt, max_tokens=None):
+    max_tokens = max_tokens or MAX_NUM_TOKENS
     if model.startswith("ollama/"):
         return client.chat.completions.create(
             model=model.replace("ollama/", ""),
@@ -222,7 +225,7 @@ def make_llm_call(client, model, temperature, system_message, prompt):
                 *prompt,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
             stop=None,
         )
@@ -234,7 +237,7 @@ def make_llm_call(client, model, temperature, system_message, prompt):
                 *prompt,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
             stop=None,
             seed=0,
@@ -272,10 +275,12 @@ def get_response_from_llm(
     print_debug=False,
     msg_history=None,
     temperature=0.7,
+    max_tokens=None,
 ) -> tuple[str, list[dict[str, Any]]]:
     msg = prompt
     if msg_history is None:
         msg_history = []
+    max_tokens = max_tokens or MAX_NUM_TOKENS
 
     if "claude" in model:
         new_msg_history = msg_history + [
@@ -291,7 +296,7 @@ def get_response_from_llm(
         ]
         response = client.messages.create(
             model=model,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             temperature=temperature,
             system=system_message,
             messages=new_msg_history,
@@ -318,7 +323,7 @@ def get_response_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
             stop=None,
         )
@@ -332,6 +337,7 @@ def get_response_from_llm(
             temperature,
             system_message=system_message,
             prompt=new_msg_history,
+            max_tokens=max_tokens,
         )
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
@@ -343,6 +349,7 @@ def get_response_from_llm(
             temperature,
             system_message=system_message,
             prompt=new_msg_history,
+            max_tokens=max_tokens,
         )
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
@@ -355,7 +362,7 @@ def get_response_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
             stop=None,
         )
@@ -371,7 +378,7 @@ def get_response_from_llm(
                     *new_msg_history,
                 ],
                 temperature=temperature,
-                max_tokens=MAX_NUM_TOKENS,
+                max_tokens=max_tokens,
                 n=1,
                 stop=None,
             )
@@ -390,7 +397,7 @@ def get_response_from_llm(
                 },
                 "parameters": {
                     "temperature": temperature,
-                    "max_new_tokens": MAX_NUM_TOKENS,
+                    "max_new_tokens": max_tokens,
                     "return_full_text": False
                 }
             }
@@ -414,7 +421,7 @@ def get_response_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
             stop=None,
         )
@@ -429,7 +436,7 @@ def get_response_from_llm(
                 *new_msg_history,
             ],
             temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
+            max_tokens=max_tokens,
             n=1,
         )
         content = response.choices[0].message.content

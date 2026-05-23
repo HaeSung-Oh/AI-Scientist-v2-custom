@@ -48,6 +48,9 @@ The IDEA JSON should include the following fields:
 - "Title": A catchy and informative title for the proposal.
 - "Short Hypothesis": A concise statement of the main hypothesis or research question. Clarify the need for this specific direction, ensure this is the best setting to investigate this idea, and there are not obvious other simpler ways to answer the question.
 - "Novelty Check": A concrete explanation of why this is not just a stale re-use of familiar baselines, a shallow module swap, or a minor variant of existing work. Cite the recent search evidence that shaped the claim.
+- "Evidence Used": A list of at least three concrete pieces of search evidence used to shape the proposal. Each item should include the source/tool, title or result name, year if available, and why it matters.
+- "FINER Scores": Scores from 1-10 for Feasible, Interesting, Novel, Ethical, and Relevant, with one concise justification per score.
+- "Scope": A concrete scope definition with In Scope and Out of Scope lists.
 - "Candidate Alternatives Considered": A list of at least three alternative ideas considered and why each was rejected.
 - "Related Work": A brief discussion of the most relevant related work and how the proposal clearly distinguishes from it, and is not a trivial extension.
 - "Abstract": An abstract that summarizes the proposal in conference format (approximately 250 words).
@@ -83,9 +86,9 @@ Ensure that the proposal does not require resources beyond what an academic lab 
 
 Avoid stale, generic ideas that merely repackage familiar baselines, add a shallow module, or make an incremental architecture swap without a clear scientific hypothesis. Use literature searches to discover current research directions instead of relying on predefined method keywords. Prefer ideas whose motivation, mechanism, and validation plan are grounded in recent evidence and a careful reading of the target problem.
 
-Synthetic, procedurally generated, or simulated data may be used only for debugging, smoke tests, pipeline checks, or controlled sanity checks. It must not be used as the main validation evidence for the research claim. The final validation plan must download and use real public datasets whenever available, and must report metrics on real data. For polyp segmentation, prioritize real datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300. Any proposal that validates the core claim only on synthetic, procedurally generated, or simulated data is invalid and must be revised before FinalizeIdea.
+Synthetic, procedurally generated, or simulated data may be used only for debugging, smoke tests, pipeline checks, or controlled sanity checks. It must not be used as the main validation evidence for the research claim. The final validation plan must use real public datasets whenever suitable datasets are available, and must report metrics on real data. Use any domain-specific dataset requirements stated in the workshop description. Any proposal that validates the core claim only on synthetic, procedurally generated, or simulated data is invalid and must be revised before FinalizeIdea.
 
-Use deep internal thinking before choosing each action. If the model supports Qwen thinking mode, use it. Compare multiple candidate directions, reject weak or stale variants, and stress-test the chosen idea before finalizing. Your final visible response must still contain only ACTION and ARGUMENTS in the required format; do not expose chain-of-thought, markdown fences, or extra commentary.
+Use deep internal thinking before choosing each action. If the model supports Qwen thinking mode, use it. Compare multiple candidate directions, reject weak or stale variants, and stress-test the chosen idea before finalizing. Your final visible response must still contain only ACTION and ARGUMENTS in the required format. Do not print thinking, chain-of-thought, markdown fences, headings, follow-up reasoning, or extra commentary.
 
 You have access to the following tools:
 
@@ -97,7 +100,7 @@ ACTION:
 <The action to take, exactly one of {tool_names_str}>
 
 ARGUMENTS:
-<If ACTION is a search tool, provide the search query as {{"query": "your search query"}}. If ACTION is "FinalizeIdea", provide the idea details as {{"idea": {{ ... }}}} with the IDEA JSON specified below.>
+<If ACTION is a search tool, provide the search query as {{"query": "[PURPOSE] your search query"}} where PURPOSE is one of [BROAD], [OVERLAP], [DISCONFIRM], or [DATASET]. If ACTION is "FinalizeIdea", provide the idea details as {{"idea": {{ ... }}}} with the IDEA JSON specified below.>
 
 If you choose to finalize your idea, provide the IDEA JSON in the arguments:
 
@@ -109,6 +112,19 @@ IDEA JSON:
     "Title": "...",
     "Short Hypothesis": "...",
     "Novelty Check": "...",
+    "Evidence Used": [
+      {{"source": "...", "title": "...", "year": "...", "why_it_matters": "..."}},
+      {{"source": "...", "title": "...", "year": "...", "why_it_matters": "..."}},
+      {{"source": "...", "title": "...", "year": "...", "why_it_matters": "..."}}
+    ],
+    "FINER Scores": {{
+      "Feasible": {{"score": 1, "justification": "..."}},
+      "Interesting": {{"score": 1, "justification": "..."}},
+      "Novel": {{"score": 1, "justification": "..."}},
+      "Ethical": {{"score": 1, "justification": "..."}},
+      "Relevant": {{"score": 1, "justification": "..."}}
+    }},
+    "Scope": {{"In Scope": ["..."], "Out of Scope": ["..."]}},
     "Candidate Alternatives Considered": ["...", "...", "..."],
     "Related Work": "...",
     "Abstract": "...",
@@ -136,8 +152,20 @@ Here are the proposals that you have already generated:
 
 Begin by deeply investigating an interestingly new high-level research proposal that differs from what you have previously proposed. Do not finalize immediately unless the literature search and validation reasoning are already strong enough. Prefer searching first.
 
+Across the search process, cover diverse search purposes. Prefix every search query with exactly one purpose tag:
+- [BROAD] for broad landscape discovery
+- [OVERLAP] for exact task or contribution overlap
+- [DISCONFIRM] for novelty-disconfirming searches that could weaken the idea
+- [DATASET] for dataset, benchmark, metric, and evaluation feasibility
+
 Shared transcript so far:
 {shared_transcript}
+
+Evidence bank so far:
+{evidence_bank}
+
+Search purpose status:
+{search_purpose_status}
 
 {search_requirements}
 """
@@ -163,8 +191,20 @@ Results from your last action (if any):
 
 {last_tool_results}
 
+Across the search process, cover diverse search purposes. Prefix every search query with exactly one purpose tag:
+- [BROAD] for broad landscape discovery
+- [OVERLAP] for exact task or contribution overlap
+- [DISCONFIRM] for novelty-disconfirming searches that could weaken the idea
+- [DATASET] for dataset, benchmark, metric, and evaluation feasibility
+
 Shared transcript so far:
 {shared_transcript}
+
+Evidence bank so far:
+{evidence_bank}
+
+Search purpose status:
+{search_purpose_status}
 
 Current literature-search requirement/status:
 {search_requirements}
@@ -180,7 +220,7 @@ Challenge novelty, feasibility, evaluation realism, and hidden overlap with prio
     "ExperimentAgent": """You are the ExperimentAgent.
 Focus on concrete datasets, metrics, baselines, ablations, resource limits, and falsification criteria. Prefer searches that clarify whether the validation plan is realistic on public data. Do not finalize vague ideas that cannot be tested cleanly.""",
     "SynthesizerAgent": """You are the SynthesizerAgent.
-Integrate the search evidence and critiques into one clean proposal. Finalize only when the search requirements are satisfied, at least three candidate directions have been compared, and the validation plan is concrete. Otherwise choose the most useful next search.""",
+Integrate the search evidence and critiques into one clean proposal. Finalize only when the search requirements are satisfied, at least three candidate directions have been compared, the Evidence Used field cites concrete items from the evidence bank, and the validation plan is concrete. Otherwise choose the most useful next search.""",
 }
 
 
@@ -212,6 +252,91 @@ def format_shared_transcript(entries: List[str], max_chars: int = 7000) -> str:
         selected.append(entry)
         total_chars += entry_len
     return "\n".join(reversed(selected))
+
+
+def extract_evidence_items(action: str, query: str, result: str, max_items: int = 4) -> List[Dict]:
+    evidence_items = []
+    if not search_result_is_successful(result):
+        return evidence_items
+
+    for line in result.splitlines():
+        match = re.match(r"^\s*\d+:\s*(.+?)(?:\.\s|$)", line.strip())
+        if not match:
+            continue
+        title = match.group(1).strip()
+        if not title:
+            continue
+        year_match = re.search(r"\b(20\d{2})\b", line)
+        evidence_items.append(
+            {
+                "source": action,
+                "query": query,
+                "title": title[:220],
+                "year": year_match.group(1) if year_match else "Unknown",
+            }
+        )
+        if len(evidence_items) >= max_items:
+            break
+    return evidence_items
+
+
+def format_evidence_bank(evidence_bank: List[Dict], max_items: int = 18) -> str:
+    if not evidence_bank:
+        return "No evidence collected yet."
+
+    lines = []
+    for item in evidence_bank[-max_items:]:
+        lines.append(
+            "- "
+            f"{item.get('source', 'Unknown source')} | "
+            f"{item.get('year', 'Unknown year')} | "
+            f"{item.get('title', 'Unknown title')} | "
+            f"query: {item.get('query', '')}"
+        )
+    return "\n".join(lines)
+
+
+SEARCH_PURPOSES = ["BROAD", "OVERLAP", "DISCONFIRM", "DATASET"]
+
+
+def parse_search_purpose(query: str) -> tuple[str | None, str]:
+    match = re.match(r"^\s*\[(BROAD|OVERLAP|DISCONFIRM|DATASET)\]\s*(.*)$", query)
+    if not match:
+        return None, query.strip()
+    return match.group(1), match.group(2).strip()
+
+
+def format_search_purpose_status(successful_search_purposes: Dict[str, int]) -> str:
+    return "; ".join(
+        f"{purpose}: {successful_search_purposes.get(purpose, 0)}"
+        for purpose in SEARCH_PURPOSES
+    )
+
+
+def normalize_for_match(text: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+
+def evidence_used_matches_bank(evidence_used: List[Any], evidence_bank: List[Dict]) -> int:
+    bank_titles = [normalize_for_match(item.get("title", "")) for item in evidence_bank]
+    matches = 0
+    for evidence in evidence_used:
+        if isinstance(evidence, dict):
+            evidence_text = " ".join(
+                str(evidence.get(key, ""))
+                for key in ["title", "source", "year", "why_it_matters"]
+            )
+        else:
+            evidence_text = str(evidence)
+        normalized_evidence = normalize_for_match(evidence_text)
+        if not normalized_evidence:
+            continue
+        if any(
+            title and (title in normalized_evidence or normalized_evidence in title)
+            for title in bank_titles
+        ):
+            matches += 1
+    return matches
 
 
 def parse_json_prefix(text: str) -> Dict:
@@ -267,6 +392,9 @@ def validate_final_idea(idea: Dict) -> List[str]:
         "Title",
         "Short Hypothesis",
         "Novelty Check",
+        "Evidence Used",
+        "FINER Scores",
+        "Scope",
         "Candidate Alternatives Considered",
         "Related Work",
         "Abstract",
@@ -279,6 +407,38 @@ def validate_final_idea(idea: Dict) -> List[str]:
     alternatives = idea.get("Candidate Alternatives Considered")
     if not isinstance(alternatives, list) or len(alternatives) < 3:
         missing.append("at least three Candidate Alternatives Considered")
+
+    evidence_used = idea.get("Evidence Used")
+    if not isinstance(evidence_used, list) or len(evidence_used) < 3:
+        missing.append("at least three Evidence Used items")
+
+    finer_scores = idea.get("FINER Scores")
+    if not isinstance(finer_scores, dict):
+        missing.append("FINER Scores object")
+    else:
+        for key in ["Feasible", "Interesting", "Novel", "Ethical", "Relevant"]:
+            score_item = finer_scores.get(key)
+            if isinstance(score_item, dict):
+                score = score_item.get("score")
+                justification = score_item.get("justification")
+            else:
+                score = score_item
+                justification = None
+            if not isinstance(score, (int, float)) or not 1 <= score <= 10:
+                missing.append(f"FINER Scores.{key} score from 1-10")
+            if not justification:
+                missing.append(f"FINER Scores.{key} justification")
+
+    scope = idea.get("Scope")
+    if not isinstance(scope, dict):
+        missing.append("Scope object")
+    else:
+        in_scope = scope.get("In Scope") or scope.get("in_scope")
+        out_scope = scope.get("Out of Scope") or scope.get("out_of_scope")
+        if not isinstance(in_scope, list) or not in_scope:
+            missing.append("Scope In Scope list")
+        if not isinstance(out_scope, list) or not out_scope:
+            missing.append("Scope Out of Scope list")
 
     experiments = idea.get("Experiments")
     if not isinstance(experiments, list) or len(experiments) < 3:
@@ -323,6 +483,8 @@ def generate_temp_free_idea(
     num_reflections: int = 5,
     min_num_searches: int = 4,
     min_num_search_sources: int = 3,
+    min_num_search_purposes: int = 3,
+    max_tokens: int | None = None,
     agent_mode: str = "single",
     reload_ideas: bool = True,
 ) -> List[Dict]:
@@ -348,8 +510,10 @@ def generate_temp_free_idea(
             agent_schedule = get_agent_schedule(agent_mode)
             agent_histories = {agent_name: [] for agent_name in agent_schedule}
             shared_transcript = []
+            evidence_bank = []
             successful_searches = 0
             successful_search_sources = set()
+            successful_search_purposes = {purpose: 0 for purpose in SEARCH_PURPOSES}
             total_agent_rounds = num_reflections * len(agent_schedule)
 
             for reflection_round in range(total_agent_rounds):
@@ -357,6 +521,10 @@ def generate_temp_free_idea(
                 cycle_idx = reflection_round // len(agent_schedule) + 1
                 agent_step_idx = reflection_round % len(agent_schedule) + 1
                 shared_transcript_text = format_shared_transcript(shared_transcript)
+                evidence_bank_text = format_evidence_bank(evidence_bank)
+                search_purpose_status = format_search_purpose_status(
+                    successful_search_purposes
+                )
                 search_requirements = (
                     f"Before FinalizeIdea, perform at least {min_num_searches} "
                     f"successful literature searches from at least "
@@ -365,7 +533,9 @@ def generate_temp_free_idea(
                     "do not count. Current progress: "
                     f"{successful_searches}/{min_num_searches} successful searches; "
                     f"{len(successful_search_sources)}/{min_num_search_sources} "
-                    f"sources used ({', '.join(sorted(successful_search_sources)) or 'none'})."
+                    f"sources used ({', '.join(sorted(successful_search_sources)) or 'none'}); "
+                    f"{sum(1 for count in successful_search_purposes.values() if count > 0)}/"
+                    f"{min_num_search_purposes} search purposes covered."
                 )
                 if reflection_round == 0:
                     # Use the initial idea generation prompt
@@ -373,6 +543,8 @@ def generate_temp_free_idea(
                         workshop_description=workshop_description,
                         prev_ideas_string=prev_ideas_string,
                         shared_transcript=shared_transcript_text,
+                        evidence_bank=evidence_bank_text,
+                        search_purpose_status=search_purpose_status,
                         search_requirements=search_requirements,
                     )
                 else:
@@ -382,6 +554,8 @@ def generate_temp_free_idea(
                         num_reflections=num_reflections,
                         last_tool_results=last_tool_results or "No new results.",
                         shared_transcript=shared_transcript_text,
+                        evidence_bank=evidence_bank_text,
+                        search_purpose_status=search_purpose_status,
                         search_requirements=search_requirements,
                     )
 
@@ -399,6 +573,7 @@ def generate_temp_free_idea(
                     model=model,
                     system_message=build_agent_system_prompt(agent_name),
                     msg_history=agent_histories[agent_name],
+                    max_tokens=max_tokens,
                 )
 
                 # Parse the LLM's response
@@ -416,6 +591,22 @@ def generate_temp_free_idea(
                             arguments_json = parse_json_prefix(arguments_text)
                         except json.JSONDecodeError:
                             raise ValueError(f"Invalid arguments JSON for {action}.")
+                        query = str(arguments_json.get("query", ""))
+                        search_purpose, clean_query = parse_search_purpose(query)
+                        if action.startswith("Search") and search_purpose is None:
+                            last_tool_results = (
+                                "Search rejected: prefix the query with exactly one "
+                                "purpose tag: [BROAD], [OVERLAP], [DISCONFIRM], or "
+                                "[DATASET]."
+                            )
+                            print(last_tool_results)
+                            shared_transcript.append(
+                                f"[{agent_name} round {reflection_round + 1}] "
+                                f"Action={action}; Rejected={trim_for_transcript(last_tool_results)}"
+                            )
+                            continue
+                        if action.startswith("Search"):
+                            arguments_json["query"] = clean_query
 
                         # Use the tool
                         try:
@@ -431,6 +622,14 @@ def generate_temp_free_idea(
                                 if search_result_is_successful(result):
                                     successful_searches += 1
                                     successful_search_sources.add(action)
+                                    successful_search_purposes[search_purpose] += 1
+                                    evidence_bank.extend(
+                                        extract_evidence_items(
+                                            action=action,
+                                            query=query,
+                                            result=result,
+                                        )
+                                    )
                                     print(
                                         "Successful literature searches: "
                                         f"{successful_searches}/{min_num_searches}; "
@@ -450,6 +649,18 @@ def generate_temp_free_idea(
                                 f"Action={action}; Error={trim_for_transcript(last_tool_results)}"
                             )
                     elif action == "FinalizeIdea":
+                        if agent_mode == "multi" and agent_name != "SynthesizerAgent":
+                            last_tool_results = (
+                                "FinalizeIdea rejected: in multi-agent mode, only "
+                                "SynthesizerAgent may finalize after integrating the "
+                                "other agents' evidence and critiques."
+                            )
+                            print(last_tool_results)
+                            shared_transcript.append(
+                                f"[{agent_name} round {reflection_round + 1}] "
+                                f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
+                            )
+                            continue
                         if (
                             successful_searches < min_num_searches
                             or len(successful_search_sources) < min_num_search_sources
@@ -472,6 +683,33 @@ def generate_temp_free_idea(
                                 f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
                             )
                             continue
+                        covered_purposes = sum(
+                            1 for count in successful_search_purposes.values() if count > 0
+                        )
+                        if covered_purposes < min_num_search_purposes:
+                            last_tool_results = (
+                                "FinalizeIdea rejected: cover at least "
+                                f"{min_num_search_purposes} distinct search purposes "
+                                "before finalizing. Current purpose status: "
+                                f"{format_search_purpose_status(successful_search_purposes)}."
+                            )
+                            print(last_tool_results)
+                            shared_transcript.append(
+                                f"[{agent_name} round {reflection_round + 1}] "
+                                f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
+                            )
+                            continue
+                        if len(evidence_bank) < 3:
+                            last_tool_results = (
+                                "FinalizeIdea rejected: fewer than three concrete "
+                                "evidence items were extracted from successful searches."
+                            )
+                            print(last_tool_results)
+                            shared_transcript.append(
+                                f"[{agent_name} round {reflection_round + 1}] "
+                                f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
+                            )
+                            continue
 
                         # Parse arguments
                         try:
@@ -484,6 +722,20 @@ def generate_temp_free_idea(
                                 last_tool_results = (
                                     "FinalizeIdea rejected: missing or weak requirements: "
                                     + "; ".join(missing_requirements)
+                                )
+                                print(last_tool_results)
+                                shared_transcript.append(
+                                    f"[{agent_name} round {reflection_round + 1}] "
+                                    f"FinalizeIdea rejected; Reason={trim_for_transcript(last_tool_results)}"
+                                )
+                                continue
+                            evidence_matches = evidence_used_matches_bank(
+                                idea.get("Evidence Used", []), evidence_bank
+                            )
+                            if evidence_matches < 2:
+                                last_tool_results = (
+                                    "FinalizeIdea rejected: at least two Evidence Used "
+                                    "items must match concrete titles in the evidence bank."
                                 )
                                 print(last_tool_results)
                                 shared_transcript.append(
@@ -520,7 +772,7 @@ def generate_temp_free_idea(
                                 "Your previous response could not be parsed. Respond "
                                 "using exactly this format:\n\nACTION:\n"
                                 "<one available action>\n\nARGUMENTS:\n"
-                                "{\"query\": \"...\"} for search, or "
+                                "{\"query\": \"[BROAD] ...\"} for search, or "
                                 "{\"idea\": {...}} for FinalizeIdea. Do not include "
                                 "markdown fences or extra text."
                             ),
@@ -602,6 +854,25 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--min-num-search-purposes",
+        type=int,
+        default=3,
+        help=(
+            "Minimum number of distinct successful search purpose tags required "
+            "before finalizing each proposal. Purpose tags are [BROAD], "
+            "[OVERLAP], [DISCONFIRM], and [DATASET]."
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Optional max output tokens per LLM call. Useful for local thinking "
+            "models that need more room for reasoning plus final JSON."
+        ),
+    )
+    parser.add_argument(
         "--agent-mode",
         type=str,
         default="single",
@@ -616,6 +887,14 @@ if __name__ == "__main__":
     if args.min_num_search_sources > args.min_num_searches:
         parser.error(
             "--min-num-search-sources cannot be greater than --min-num-searches."
+        )
+    if args.min_num_search_purposes > len(SEARCH_PURPOSES):
+        parser.error(
+            f"--min-num-search-purposes cannot be greater than {len(SEARCH_PURPOSES)}."
+        )
+    if args.min_num_search_purposes > args.min_num_searches:
+        parser.error(
+            "--min-num-search-purposes cannot be greater than --min-num-searches."
         )
     total_planned_agent_rounds = args.num_reflections * len(
         get_agent_schedule(args.agent_mode)
@@ -648,6 +927,8 @@ if __name__ == "__main__":
         num_reflections=args.num_reflections,
         min_num_searches=args.min_num_searches,
         min_num_search_sources=args.min_num_search_sources,
+        min_num_search_purposes=args.min_num_search_purposes,
+        max_tokens=args.max_tokens,
         agent_mode=args.agent_mode,
     )
     print(f"{args.workshop_file} generated {len(ideas)} ideas.")
