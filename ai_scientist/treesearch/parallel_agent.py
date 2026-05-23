@@ -311,15 +311,23 @@ class MinimalAgent:
             "CRITICAL MODEL INPUT GUIDELINES:",
             "  - Always pay extra attention to the input to the model being properly normalized",
             "  - This is extremely important because the input to the model's forward pass directly affects the output, and the loss function is computed based on the output",
+            "CRITICAL DATASET VALIDATION GUIDELINES:",
+            "  - Synthetic, procedurally generated, or simulated data is allowed only for debugging, smoke tests, pipeline checks, or controlled sanity checks.",
+            "  - Do NOT use synthetic, procedurally generated, or simulated data as the main evidence for validating the research claim.",
+            "  - Download and use real public datasets for the actual validation whenever available.",
+            "  - For polyp segmentation experiments, prioritize real public datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300.",
+            "  - Report metrics on real data. For cross-domain tasks, use source-to-target or leave-one-domain-out protocols when possible.",
+            "  - Any implementation that only validates the core claim on synthetic, procedurally generated, or simulated data is incomplete and should be revised.",
         ]
         if hasattr(self.cfg.experiment, "num_syn_datasets"):
             num_syn_datasets = self.cfg.experiment.num_syn_datasets
             if num_syn_datasets > 1:
                 impl_guideline.extend(
                     [
-                        f"You MUST evaluate your solution on at least {num_syn_datasets} different synthetic datasets to ensure robustness:",
-                        "  - Use standard benchmark datasets when available",
-                        f"  - If using synthetic data, generate at least {num_syn_datasets} variants with different characteristics",
+                        f"You MUST evaluate your solution on at least {num_syn_datasets} different datasets, domains, or dataset variants to ensure robustness:",
+                        "  - Download and use standard public benchmark datasets when available.",
+                        "  - Use real datasets, real domains, real source-to-target splits, or real dataset variants for validation.",
+                        "  - Synthetic, procedurally generated, or simulated data may only be used for debugging, smoke tests, pipeline checks, or controlled sanity checks.",
                         "  - Report metrics separately for each dataset",
                         "  - Compute and report the average metric across all datasets",
                     ]
@@ -479,7 +487,7 @@ class MinimalAgent:
                 "Take the Memory section into consideration when proposing the design. ",
                 "The solution sketch should be 6-10 sentences. ",
                 "Don't suggest to do EDA.",
-                "Make sure to create synthetic data if needed.",
+                "Use synthetic, procedurally generated, or simulated data only for debugging, smoke tests, pipeline checks, or controlled sanity checks. For actual validation, download and use real public datasets whenever available.",
                 "",
             ],
             "Evaluation Metric(s)": self.evaluation_metrics,
@@ -1901,7 +1909,7 @@ class ParallelAgent:
                     "1. Identify ONE specific component/feature to ablate",
                     "2. Ensure the ablation is different from previous completed or running attempts",
                     "3. The ablation should be a new idea, not a variation of previous ideas",
-                    "4. If you have only used a single synthetic dataset throughout the experiment, one of your ablations should be to use multiple synthetic datasets (at least 3 different datasets)",
+                    "4. Prefer ablations across real datasets, real domains, or real source-to-target splits. Do not replace final validation with synthetic, procedurally generated, or simulated datasets.",
                 ]
             },
             "Response format": (

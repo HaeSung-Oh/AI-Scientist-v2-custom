@@ -83,6 +83,8 @@ Ensure that the proposal does not require resources beyond what an academic lab 
 
 Avoid stale, generic ideas based mainly on GRL, vanilla domain adversarial training, VAE disentanglement, or simple attention masking. You may mention these only as baselines or limitations, not as the main contribution. Prefer ideas grounded in 2024-2026 research directions, such as foundation-model priors, test-time adaptation, causal interventions, counterfactual image editing, diffusion-based perturbation, SAM/MedSAM-style prompting, uncertainty-aware pseudo-labeling, mechanistic shortcut diagnosis, and rigorous cross-domain evaluation.
 
+Synthetic, procedurally generated, or simulated data may be used only for debugging, smoke tests, pipeline checks, or controlled sanity checks. It must not be used as the main validation evidence for the research claim. The final validation plan must download and use real public datasets whenever available, and must report metrics on real data. For polyp segmentation, prioritize real datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300. Any proposal that validates the core claim only on synthetic, procedurally generated, or simulated data is invalid and must be revised before FinalizeIdea.
+
 Use deep internal thinking before choosing each action. If the model supports Qwen thinking mode, use it. Compare multiple candidate directions, reject weak or stale variants, and stress-test the chosen idea before finalizing. Your final visible response must still contain only ACTION and ARGUMENTS in the required format; do not expose chain-of-thought, markdown fences, or extra commentary.
 
 You have access to the following tools:
