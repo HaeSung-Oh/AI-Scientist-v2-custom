@@ -22,6 +22,7 @@ from rich import print
 from pathlib import Path
 import base64
 import sys
+import importlib.util
 
 logger = logging.getLogger("ai-scientist")
 
@@ -270,29 +271,63 @@ class MinimalAgent:
         self.stage_name = stage_name
         self.data_preview = None
 
+    def _task_mentions_any(self, keywords: list[str]) -> bool:
+        task_text = (self.task_desc or "").lower()
+        return any(keyword.lower() in task_text for keyword in keywords)
+
     @property
     def _prompt_environment(self):
-        pkgs = [
-            "numpy",
-            "pandas",
-            "scikit-learn",
-            "statsmodels",
-            "xgboost",
-            "lightGBM",
-            "torch",
-            "torchvision",
-            "torch-geometric",
-            "bayesian-optimization",
-            "timm",
-            "albumentations",
+        package_imports = {
+            "numpy": "numpy",
+            "pandas": "pandas",
+            "scikit-learn": "sklearn",
+            "statsmodels": "statsmodels",
+            "xgboost": "xgboost",
+            "lightGBM": "lightgbm",
+            "torch": "torch",
+            "torchvision": "torchvision",
+            "torch-geometric": "torch_geometric",
+            "bayesian-optimization": "bayes_opt",
+            "timm": "timm",
+            "albumentations": "albumentations",
+            "Pillow": "PIL",
+            "PyYAML": "yaml",
+            "psutil": "psutil",
+        }
+        available = [
+            name
+            for name, import_name in package_imports.items()
+            if importlib.util.find_spec(import_name) is not None
         ]
-        random.shuffle(pkgs)
-        pkg_str = ", ".join([f"`{p}`" for p in pkgs])
+        missing = sorted(set(package_imports) - set(available))
+        random.shuffle(available)
+        available_str = ", ".join([f"`{p}`" for p in available]) or "none detected"
+        missing_str = ", ".join([f"`{p}`" for p in missing]) or "none"
 
         env_prompt = {
-            "Installed Packages": f"Your solution can use any relevant machine learning packages such as: {pkg_str}. Feel free to use any other packages too (all packages are already installed!). For neural networks we suggest using PyTorch rather than TensorFlow."
+            "Runtime Packages": (
+                f"Verified available packages include: {available_str}. "
+                f"Do not assume unavailable optional packages are installed; currently not detected: {missing_str}. "
+                "Prefer the verified packages and standard library. If an optional package is essential, guard the import with a clear RuntimeError explaining the missing dependency. "
+                "For neural networks, prefer PyTorch rather than TensorFlow."
+            )
         }
         return env_prompt
+
+    @property
+    def _prompt_domain_guideline(self):
+        domain_guidelines = []
+        if self._task_mentions_any(["polyp", "kvasir", "cvc-clinicdb", "clinicdb"]):
+            domain_guidelines.extend(
+                [
+                    "DOMAIN-SPECIFIC POLYP SEGMENTATION REQUIREMENTS:",
+                    "  - Prioritize real public datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300.",
+                    "  - In this launcher, prepared datasets are exposed as `input/Kvasir-SEG/images`, `input/Kvasir-SEG/masks`, `input/CVC-ClinicDB/images`, and `input/CVC-ClinicDB/masks` when available.",
+                    "  - First verify required input directories exist and contain image files; if they are missing, raise a clear RuntimeError instead of creating synthetic validation data.",
+                    "  - For cross-domain claims, use source-to-target or leave-one-domain-out protocols when possible.",
+                ]
+            )
+        return {"Domain-specific guideline": domain_guidelines} if domain_guidelines else {}
 
     @property
     def _prompt_impl_guideline(self):
@@ -314,11 +349,8 @@ class MinimalAgent:
             "CRITICAL DATASET VALIDATION GUIDELINES:",
             "  - Synthetic, procedurally generated, or simulated data is allowed only for debugging, smoke tests, pipeline checks, or controlled sanity checks.",
             "  - Do NOT use synthetic, procedurally generated, or simulated data as the main evidence for validating the research claim.",
-            "  - Download and use real public datasets for the actual validation whenever available.",
-            "  - For polyp segmentation experiments, prioritize real public datasets such as Kvasir-SEG, CVC-ClinicDB, CVC-ColonDB, ETIS-LaribPolypDB, and CVC-300.",
-            "  - For this launcher, real polyp datasets are prepared in the runtime input directory as `input/Kvasir-SEG/images`, `input/Kvasir-SEG/masks`, `input/CVC-ClinicDB/images`, and `input/CVC-ClinicDB/masks` when available.",
-            "  - For polyp segmentation code, first verify these input directories exist and contain image files; if they are missing, raise a clear RuntimeError instead of creating synthetic validation data.",
-            "  - Report metrics on real data. For cross-domain tasks, use source-to-target or leave-one-domain-out protocols when possible.",
+            "  - Download and use real public datasets for the actual validation whenever available and practical within the runtime budget.",
+            "  - Report metrics on real data. For cross-domain tasks, use real source-to-target or leave-one-domain-out protocols when possible.",
             "  - Any implementation that only validates the core claim on synthetic, procedurally generated, or simulated data is incomplete and should be revised.",
         ]
         if hasattr(self.cfg.experiment, "num_syn_datasets"):
@@ -495,6 +527,7 @@ class MinimalAgent:
             "Evaluation Metric(s)": self.evaluation_metrics,
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
+        prompt["Instructions"] |= self._prompt_domain_guideline
         prompt["Instructions"] |= self._prompt_environment
 
         if self.cfg.agent.data_preview:
@@ -532,6 +565,7 @@ class MinimalAgent:
             ],
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
+        prompt["Instructions"] |= self._prompt_domain_guideline
 
         if self.cfg.agent.data_preview:
             prompt["Data Overview"] = self.data_preview
@@ -557,6 +591,7 @@ class MinimalAgent:
 
         prompt["Instructions"] |= self._prompt_resp_fmt
         prompt["Instructions"] |= self._prompt_impl_guideline
+        prompt["Instructions"] |= self._prompt_domain_guideline
 
         plan, code = self.plan_and_code_query(prompt)
         return Node(

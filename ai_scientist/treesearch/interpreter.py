@@ -225,6 +225,24 @@ class Interpreter:
 
         logger.debug(f"REPL is executing code (reset_session={reset_session})")
 
+        try:
+            compile(code, self.agent_file_name, "exec")
+        except SyntaxError as e:
+            tb_str = "".join(traceback.format_exception(e))
+            return ExecutionResult(
+                term_out=[tb_str],
+                exec_time=0.0,
+                exc_type=e.__class__.__name__,
+                exc_info={
+                    "args": [str(i) for i in e.args],
+                    "msg": str(e.msg),
+                    "filename": str(e.filename),
+                    "lineno": str(e.lineno),
+                    "offset": str(e.offset),
+                },
+                exc_stack=[],
+            )
+
         if reset_session:
             if self.process is not None:
                 # terminate and clean up previous process
