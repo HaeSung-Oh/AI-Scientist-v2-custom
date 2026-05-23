@@ -9,7 +9,7 @@ import backoff
 from ai_scientist.tools.base_tool import BaseTool
 
 
-S2_MIN_REQUEST_INTERVAL_SECONDS = 1.1
+S2_MIN_REQUEST_INTERVAL_SECONDS = 2.0
 _last_s2_request_time = 0.0
 
 
