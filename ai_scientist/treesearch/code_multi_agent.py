@@ -1,0 +1,192 @@
+"""Sequential multi-agent code generation for BFTS nodes."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from rich import print
+
+from .backend import query
+from .code_validation import validate_generated_code
+from .utils.response import extract_code, extract_text_up_to_code, wrap_code
+
+
+def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if hasattr(obj, "get"):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+class SequentialCodeMultiAgent:
+    """Planner -> writer -> reviewer -> repairer loop for generated code."""
+
+    def __init__(self, cfg: Any):
+        self.cfg = cfg
+        self.code_cfg = cfg.agent.code
+        self.multi_cfg = _cfg_get(self.code_cfg, "sequential_multi", {}) or {}
+        self.max_review_rounds = int(_cfg_get(self.multi_cfg, "max_review_rounds", 1))
+        self.max_repair_rounds = int(_cfg_get(self.multi_cfg, "max_repair_rounds", 3))
+        self.run_py_compile = bool(_cfg_get(self.multi_cfg, "run_py_compile", True))
+        self.run_import_check = bool(_cfg_get(self.multi_cfg, "run_import_check", True))
+        self.reject_synthetic_only = bool(
+            _cfg_get(self.multi_cfg, "reject_synthetic_only", True)
+        )
+
+    def _query(self, role: str, system_message: Any, user_message: Any = None) -> str:
+        print(f"[cyan]SequentialCodeMultiAgent: {role}[/cyan]")
+        return query(
+            system_message=system_message,
+            user_message=user_message,
+            model=self.code_cfg.model,
+            temperature=self.code_cfg.temp,
+            max_tokens=self.code_cfg.max_tokens,
+        )
+
+    def _extract_or_repairable_code(self, response: str) -> tuple[str, str]:
+        code = extract_code(response)
+        plan = extract_text_up_to_code(response)
+        if code:
+            return plan or "Model returned code without a separate plan.", code
+        return (
+            "Model failed to return a Python code block.",
+            "raise RuntimeError('Sequential code agent failed to return code.')",
+        )
+
+    def _planner_prompt(self, base_prompt: Any) -> dict:
+        return {
+            "Role": "You are CodePlannerAgent.",
+            "Task": (
+                "Read the research/code-generation request and produce a concise, "
+                "implementation-oriented plan. Do not write code. Break the work into "
+                "small validated steps and identify likely failure points."
+            ),
+            "Original request": base_prompt,
+            "Output format": "Return concise bullet points only.",
+        }
+
+    def _writer_prompt(self, base_prompt: Any, plan: str) -> dict:
+        prompt = {
+            "Role": "You are CodeWriterAgent.",
+            "Planning notes": plan,
+            "Original request": base_prompt,
+            "Additional requirements": [
+                "Return one complete executable Python code block.",
+                "Preserve the original request's metric-saving and runtime requirements.",
+                "Avoid optional packages unless they are clearly available from the runtime package guidance.",
+                "Do not validate the core research claim using only synthetic data.",
+            ],
+        }
+        return prompt
+
+    def _reviewer_prompt(self, base_prompt: Any, plan: str, code: str) -> dict:
+        return {
+            "Role": "You are CodeReviewerAgent.",
+            "Task": (
+                "Review this generated research experiment code before execution. "
+                "Focus on real bugs and experiment-invalidating issues."
+            ),
+            "Original request": base_prompt,
+            "Planning notes": plan,
+            "Code to review": wrap_code(code),
+            "Review checklist": [
+                "syntax and obvious Python API mistakes",
+                "missing or suspicious imports",
+                "invented dataset paths",
+                "synthetic-only validation",
+                "metric saving to experiment_data.npy",
+                "PyTorch tensor shape and target/output compatibility",
+                "runtime feasibility within the configured timeout",
+            ],
+            "Output format": (
+                "Return REVIEW_PASS if no material issues remain. Otherwise return "
+                "a concise numbered list of required fixes."
+            ),
+        }
+
+    def _repair_prompt(
+        self,
+        base_prompt: Any,
+        plan: str,
+        code: str,
+        feedback: str,
+        validation_feedback: str | None = None,
+    ) -> dict:
+        return {
+            "Role": "You are CodeRepairAgent.",
+            "Task": (
+                "Revise the code to address the reviewer and validation feedback. "
+                "Prefer small targeted fixes. Return the full corrected Python script."
+            ),
+            "Original request": base_prompt,
+            "Planning notes": plan,
+            "Previous code": wrap_code(code),
+            "Reviewer feedback": feedback,
+            "Validation feedback": validation_feedback or "No validation feedback yet.",
+            "Output format": "Return a brief repair summary followed by one Python code block.",
+        }
+
+    def run(self, base_prompt: Any, retries: int = 3) -> tuple[str, str]:
+        plan = self._query("planning", self._planner_prompt(base_prompt))
+        writer_response = self._query("writing", self._writer_prompt(base_prompt, plan))
+        writer_plan, code = self._extract_or_repairable_code(writer_response)
+        combined_plan = f"{plan}\n\nInitial writer notes:\n{writer_plan}".strip()
+
+        review_feedback = ""
+        for review_round in range(self.max_review_rounds):
+            review_feedback = self._query(
+                f"review {review_round + 1}/{self.max_review_rounds}",
+                self._reviewer_prompt(base_prompt, combined_plan, code),
+            )
+            if "REVIEW_PASS" in review_feedback.upper():
+                break
+            repair_response = self._query(
+                f"review repair {review_round + 1}/{self.max_review_rounds}",
+                self._repair_prompt(base_prompt, combined_plan, code, review_feedback),
+            )
+            repair_plan, code = self._extract_or_repairable_code(repair_response)
+            combined_plan = f"{combined_plan}\n\nReview repair notes:\n{repair_plan}".strip()
+
+        validation_feedback = ""
+        for repair_round in range(self.max_repair_rounds + 1):
+            validation = validate_generated_code(
+                code,
+                run_py_compile=self.run_py_compile,
+                run_import_check=self.run_import_check,
+                reject_synthetic_only=self.reject_synthetic_only,
+            )
+            validation_feedback = validation.to_feedback()
+            print(f"[cyan]{validation_feedback}[/cyan]")
+            if validation.ok:
+                if validation.warnings:
+                    combined_plan = (
+                        f"{combined_plan}\n\nValidation warnings:\n"
+                        + "\n".join(validation.warnings)
+                    )
+                return combined_plan, code
+
+            if repair_round >= self.max_repair_rounds:
+                break
+
+            repair_response = self._query(
+                f"validation repair {repair_round + 1}/{self.max_repair_rounds}",
+                self._repair_prompt(
+                    base_prompt,
+                    combined_plan,
+                    code,
+                    review_feedback or "No reviewer feedback.",
+                    validation_feedback,
+                ),
+            )
+            repair_plan, code = self._extract_or_repairable_code(repair_response)
+            combined_plan = (
+                f"{combined_plan}\n\nValidation repair notes:\n{repair_plan}"
+            ).strip()
+
+        return (
+            combined_plan
+            + "\n\nSequential multi-agent validation failed before BFTS execution:\n"
+            + validation_feedback,
+            "raise RuntimeError('Sequential multi-agent code validation failed.')",
+        )

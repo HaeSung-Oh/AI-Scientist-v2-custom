@@ -39,6 +39,8 @@ class StageConfig:
     thinking: ThinkingConfig
     betas: str
     max_tokens: Optional[int] = None
+    mode: Optional[str] = None
+    sequential_multi: Optional[dict] = None
 
 
 @dataclass

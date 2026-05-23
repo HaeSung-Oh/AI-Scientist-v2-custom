@@ -7,6 +7,7 @@ from queue import Queue
 import logging
 import humanize
 from .backend import FunctionSpec, compile_prompt_to_md, query
+from .code_multi_agent import SequentialCodeMultiAgent
 from .interpreter import ExecutionResult
 from .journal import Journal, Node
 from .utils import data_preview
@@ -711,6 +712,9 @@ class MinimalAgent:
 
     def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str]:
         """Generate a natural language plan + code in the same LLM call and split them apart."""
+        if getattr(self.cfg.agent.code, "mode", "single_shot") == "sequential_multi":
+            return SequentialCodeMultiAgent(self.cfg).run(prompt, retries=retries)
+
         completion_text = None
         for _ in range(retries):
             completion_text = query(
@@ -1283,6 +1287,9 @@ class ParallelAgent:
 
     def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str]:
         """Generate a natural language plan + code in the same LLM call and split them apart."""
+        if getattr(self.cfg.agent.code, "mode", "single_shot") == "sequential_multi":
+            return SequentialCodeMultiAgent(self.cfg).run(prompt, retries=retries)
+
         completion_text = None
         for _ in range(retries):
             completion_text = query(

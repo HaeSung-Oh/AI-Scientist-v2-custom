@@ -57,6 +57,13 @@ agent:
     model: ollama/qwen3:32b # qwen3-coder:30b returns empty content on long BFTS code prompts.
     temp: 0.2
     max_tokens: 12000
+    mode: sequential_multi
+    sequential_multi:
+      max_review_rounds: 1
+      max_repair_rounds: 3
+      run_py_compile: true
+      run_import_check: true
+      reject_synthetic_only: true
 
   # LLM settings for evaluating program output / tracebacks
   feedback:
